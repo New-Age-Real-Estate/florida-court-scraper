@@ -99,13 +99,18 @@ async def run_orange_stage1(target_date: str = None) -> int:
             print(f"[*] Loaded: {page.url} | Title: '{await page.title()}'")
 
             print(f"[*] Entering date range: {target_date}...")
-            date_from = page.locator("input[name*='recordingDate-from'], input[name*='recordedDateStart'], input[name*='dateFrom'], input#recordingDate-from, input#recordedDateStart, input#dateFrom, input[placeholder*='MM/DD/YYYY']").first
-            date_to = page.locator("input[name*='recordingDate-to'], input[name*='recordedDateEnd'], input[name*='dateTo'], input#recordingDate-to, input#recordedDateEnd, input#dateTo").first
-
-            if await date_from.is_visible():
-                await date_from.fill(target_date)
-            if await date_to.is_visible():
-                await date_to.fill(target_date)
+            text_inputs = await page.locator("input[type='text'], input:not([type])").all()
+            if len(text_inputs) >= 2:
+                print(f"[*] Found {len(text_inputs)} text inputs. Filling date range into first two inputs...")
+                await text_inputs[0].fill(target_date)
+                await text_inputs[1].fill(target_date)
+            else:
+                date_from = page.locator("input[name*='recordingDate-from'], input[name*='recordedDateStart'], input[name*='dateFrom'], input#recordingDate-from, input#recordedDateStart, input#dateFrom, input[placeholder*='MM/DD/YYYY']").first
+                date_to = page.locator("input[name*='recordingDate-to'], input[name*='recordedDateEnd'], input[name*='dateTo'], input#recordingDate-to, input#recordedDateEnd, input#dateTo").first
+                if await date_from.is_visible():
+                    await date_from.fill(target_date)
+                if await date_to.is_visible():
+                    await date_to.fill(target_date)
 
             print("[*] Filtering by Document Type: Lis Pendens (LP)...")
             doc_type_input = page.locator("input[name*='docType'], input#docType, input[placeholder*='Doc Type'], input[name*='documentType']").first
@@ -124,13 +129,20 @@ async def run_orange_stage1(target_date: str = None) -> int:
                             pass
 
             print(f"[*] Submitting search...")
-            search_btn = page.locator("button#submitSearch, input#btnSearch, input[value='Search'], button#btnSearch, button:has-text('Search'), a.ui-btn:has-text('Search'), a:has-text('Search'), input[type='submit']").first
             try:
-                await search_btn.click(timeout=8000)
-            except Exception:
-                print("[*] Search button click fallback: pressing Enter...")
-                await page.keyboard.press("Enter")
-            await page.wait_for_timeout(4000)
+                await page.evaluate("""() => {
+                    const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Search') ||
+                                document.querySelector('input[type=\"submit\"][value=\"Search\"], button#submitSearch, button[type=\"submit\"]');
+                    if (btn) btn.click();
+                }""")
+            except Exception as e:
+                print(f"[*] DOM search button click note: {e}")
+                search_btn = page.locator("button:text-is('Search'), button[type='submit']").first
+                try:
+                    await search_btn.click(force=True, timeout=5000)
+                except Exception:
+                    await page.keyboard.press("Enter")
+            await page.wait_for_timeout(5000)
 
             row_selector = "table.results tr:not(:first-child), table#searchResults tr:not(:first-child), table[class*='results'] tr:not(:first-child), table.report tr:not(:first-child)"
             result_rows = page.locator(row_selector)
