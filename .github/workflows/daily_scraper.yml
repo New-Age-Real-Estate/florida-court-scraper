@@ -1,0 +1,61 @@
+name: Florida Court Lis Pendens Daily Pipeline
+
+on:
+  schedule:
+    # Runs at 22:00 UTC (6:00 PM EDT / 5:00 PM EST) Monday through Friday
+    - cron: '0 22 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      scrape_date:
+        description: 'Target Recording Date (MM/DD/YYYY) - leave empty for auto previous business day'
+        required: false
+        default: '10/22/2026'
+
+jobs:
+  scrape-hillsborough:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Run Lis Pendens Scraper & Upload to S3
+        env:
+          BRIGHT_DATA_WS_ENDPOINT: ${{ secrets.BRIGHT_DATA_WS_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-2
+          PIPELINE_WEBHOOK_URL: ${{ secrets.PIPELINE_WEBHOOK_URL }}
+        run: |
+          if [ -n "${{ github.event.inputs.scrape_date }}" ]; then
+            echo "Running scraper for date: ${{ github.event.inputs.scrape_date }}"
+            python run_daily.py --date "${{ github.event.inputs.scrape_date }}"
+          else
+            echo "Running automated weekday collection"
+            python run_daily.py
+          fi
+
+      - name: Upload Daily Run Artifacts (CSV & DB Backup)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-output
+          path: |
+            hillsborough_report_*.csv
+            hillsborough_records.db
+            downloads/
+          retention-days: 14
