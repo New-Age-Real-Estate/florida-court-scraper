@@ -126,28 +126,22 @@ async def run_stage1_ori(target_date: str = None) -> int:
 
             await begin_input.click()
             await begin_input.fill(target_date)
-            await page.keyboard.press("Tab")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
 
             await end_input.click()
             await end_input.fill(target_date)
-            await page.keyboard.press("Tab")
+            await page.keyboard.press("Escape")
             await page.wait_for_timeout(500)
 
-            # 6. Click Search (handle double click if calendar popup merely closes)
+            # 6. Click Search (use direct JavaScript click so datepicker overlay doesn't block it)
             print("[*] Submitting search...")
-            search_button = page.locator(".search-action-buttons button:has-text('Search'), button:has-text('Search')").first
-            await search_button.click()
-            await page.wait_for_timeout(1500)
-
-            # 6. Click Search
-            print("[*] Submitting search...")
-            search_button = page.locator(".search-action-buttons button:has-text('Search'), button:has-text('Search')").first
-            await search_button.click()
+            await page.evaluate("() => { const btn = document.querySelector('button#sub') || document.querySelector('button:has-text(\"Search\")'); if (btn) btn.click(); }")
             await page.wait_for_timeout(2000)
 
-            # Wait for real result rows (ignore the hidden template row: .jsgrid-nodata-row)
+            # Wait for real result rows inside the search results grid (#jsgrid-table)
             print("[*] Waiting for search results table...")
-            row_selector = "tr.jsgrid-row, tr.jsgrid-alt-row, table tbody tr:not(.jsgrid-nodata-row)"
+            row_selector = "#jsgrid-table .jsgrid-grid-body tr.jsgrid-row, #jsgrid-table .jsgrid-grid-body tr.jsgrid-alt-row, tr.jsgrid-row, tr.jsgrid-alt-row"
             results_rows = page.locator(row_selector)
 
             try:
@@ -159,9 +153,9 @@ async def run_stage1_ori(target_date: str = None) -> int:
                     print(f"[!] No Lis Pendens records filed on {target_date}.")
                     await browser.close()
                     return 0
-                # Sometimes the first click closed a datepicker overlay; click Search once more
+                # Sometimes a second click is needed if initial page was transitioning
                 print("[*] Retrying search button click...")
-                await search_button.click()
+                await page.evaluate("() => { const btn = document.querySelector('button#sub'); if (btn) btn.click(); }")
                 await results_rows.first.wait_for(state="visible", timeout=25000)
 
             await page.wait_for_timeout(2000)
@@ -182,7 +176,7 @@ async def run_stage1_ori(target_date: str = None) -> int:
 
             while has_next_page:
                 print(f"\n[*] Scanning page {page_index}...")
-                rows = await page.locator("tr.jsgrid-row, tr.jsgrid-alt-row, table tbody tr:not(.jsgrid-nodata-row)").all()
+                rows = await page.locator(row_selector).all()
                 print(f"[*] Found {len(rows)} rows on current page.")
 
                 for idx, row in enumerate(rows):
