@@ -29,11 +29,17 @@ def init_db():
         conn.commit()
 
 def is_instrument_recorded(instrument_number: str) -> bool:
-    """Checks if a document has already been downloaded."""
+    """Checks if a document has already been downloaded and verified."""
     with get_connection() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM lis_pendens WHERE instrument_number = ?", (instrument_number,))
-        return cur.fetchone() is not None
+        cur.execute("SELECT pdf_path FROM lis_pendens WHERE instrument_number = ?", (instrument_number,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        pdf_path = row[0]
+        if pdf_path and (pdf_path.startswith("http://") or pdf_path.startswith("https://") or pdf_path.startswith("s3://") or os.path.isfile(pdf_path)):
+            return True
+        return False
 
 def insert_or_update_lp(
     instrument_number: str,
