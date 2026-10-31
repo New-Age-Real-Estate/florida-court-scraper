@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 logger = logging.getLogger("court_scraper.storage")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Cloud Storage configuration
 S3_BUCKET = os.getenv("S3_BUCKET")

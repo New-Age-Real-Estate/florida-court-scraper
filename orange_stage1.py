@@ -102,9 +102,13 @@ async def run_orange_stage1(target_date: str = None) -> int:
                         except Exception:
                             pass
 
-            print("[*] Submitting search...")
-            search_btn = page.locator("input#btnSearch, input[value='Search'], button#btnSearch, button:has-text('Search')").first
-            await search_btn.click()
+            print(f"[*] Submitting search on {page.url}...")
+            search_btn = page.locator("input#btnSearch, input[value='Search'], button#btnSearch, button:has-text('Search'), a:has-text('Search'), input[type='submit']").first
+            try:
+                await search_btn.click(timeout=8000)
+            except Exception:
+                print("[*] Search button click fallback: pressing Enter...")
+                await page.keyboard.press("Enter")
             await page.wait_for_timeout(3000)
 
             row_selector = "table.results tr:not(:first-child), table#searchResults tr:not(:first-child), table[class*='results'] tr:not(:first-child), table.report tr:not(:first-child)"

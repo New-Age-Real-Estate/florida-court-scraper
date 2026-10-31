@@ -165,6 +165,12 @@ async def main():
     if args.county in ("all", "orange"):
         print(f"\n>>> [2/2] RUNNING ORANGE COUNTY PIPELINE <<<")
         try:
+            try:
+                from orange_probe import main as probe_orange
+                await probe_orange()
+            except Exception as pe:
+                print(f"[!] Probe warning: {pe}")
+
             orange_lps = await run_orange_stage1(target_date)
             orange_csv = export_orange_daily_csv(target_date)
 
