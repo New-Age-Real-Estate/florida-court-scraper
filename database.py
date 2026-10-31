@@ -69,18 +69,29 @@ def insert_or_update_lp(
         """, (instrument_number, recording_date, party_name, case_number, pdf_path, county))
         conn.commit()
 
-def get_pending_hover_cases() -> List[Dict[str, Any]]:
+def get_pending_hover_cases(county: Optional[str] = None) -> List[Dict[str, Any]]:
     """Returns all records that have a case number but haven't had their docket/debt pulled yet."""
     with get_connection() as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("""
-            SELECT instrument_number, recording_date, party_name, case_number, pdf_path
-            FROM lis_pendens 
-            WHERE case_number IS NOT NULL 
-              AND trim(case_number) != '' 
-              AND hover_status = 'PENDING'
-        """)
+        if county:
+            county_clean = county.lower().strip()
+            cur.execute("""
+                SELECT instrument_number, recording_date, party_name, case_number, pdf_path, county
+                FROM lis_pendens 
+                WHERE case_number IS NOT NULL 
+                  AND trim(case_number) != '' 
+                  AND hover_status = 'PENDING'
+                  AND (county = ? OR (? = 'hillsborough' AND county IS NULL))
+            """, (county_clean, county_clean))
+        else:
+            cur.execute("""
+                SELECT instrument_number, recording_date, party_name, case_number, pdf_path, county
+                FROM lis_pendens 
+                WHERE case_number IS NOT NULL 
+                  AND trim(case_number) != '' 
+                  AND hover_status = 'PENDING'
+            """)
         return [dict(row) for row in cur.fetchall()]
 
 def update_hover_results(
