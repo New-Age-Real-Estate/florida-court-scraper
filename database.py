@@ -126,3 +126,59 @@ def get_daily_summary(target_date: str) -> Dict[str, Any]:
             "cases_with_debt": cases_with_debt,
             "total_debt_value": total_debt_value
         }
+
+def export_county_daily_csv(county: str, target_date: str) -> str:
+    """Exports all records for a specific county and date to CSV and uploads to S3."""
+    import csv
+    from storage import upload_file_to_cloud
+
+    county_clean = county.lower().strip()
+    clean_date = target_date.replace("/", "-")
+    csv_filename = f"{county_clean}_report_{clean_date}.csv"
+    base_dir = os.path.dirname(__file__)
+    csv_path = os.path.join(base_dir, csv_filename)
+
+    with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT instrument_number, recording_date, party_name, case_number, pdf_path, debt_amount
+            FROM lis_pendens
+            WHERE recording_date = ? AND (county = ? OR (county IS NULL AND ? = 'hillsborough') OR pdf_path LIKE '%' || ? || '%')
+            ORDER BY created_at DESC
+        """, (target_date, county_clean, county_clean, county_clean))
+        rows = [dict(r) for r in cur.fetchall()]
+
+    fieldnames = [
+        "instrument_number",
+        "recording_date",
+        "county",
+        "party_name",
+        "case_number",
+        "pdf_path",
+        "debt_amount"
+    ]
+
+    with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "instrument_number": r.get("instrument_number", ""),
+                "recording_date": r.get("recording_date", ""),
+                "county": county_clean.title(),
+                "party_name": r.get("party_name", ""),
+                "case_number": r.get("case_number", ""),
+                "pdf_path": r.get("pdf_path", ""),
+                "debt_amount": f"${r.get('debt_amount', 0):,.2f}" if r.get("debt_amount") else ""
+            })
+
+    # Upload to S3 under county partition
+    s3_key_date = f"{county_clean}/{clean_date}/{csv_filename}"
+    s3_key_reports = f"{county_clean}/reports/{csv_filename}"
+    upload_file_to_cloud(csv_path, s3_key_date)
+    upload_file_to_cloud(csv_path, s3_key_reports)
+    print(f"[*] Exported {len(rows)} {county_clean.title()} records to CSV: {csv_filename} and uploaded to S3.")
+
+    return csv_filename
+
