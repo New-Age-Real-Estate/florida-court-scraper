@@ -11,7 +11,7 @@ from storage import upload_file_to_cloud
 load_dotenv()
 
 BRIGHT_DATA_WS_ENDPOINT = os.getenv("BRIGHT_DATA_WS_ENDPOINT")
-USE_LOCAL_BROWSER = os.getenv("USE_LOCAL_BROWSER", "true").lower() in ("true", "1", "yes")
+USE_LOCAL_BROWSER = os.getenv("USE_LOCAL_BROWSER", "false" if BRIGHT_DATA_WS_ENDPOINT else "true").lower() in ("true", "1", "yes")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOCKET_DIR = os.getenv("DOCKET_DIR", os.path.join(BASE_DIR, "downloads/court_dockets"))
 DEBUG_DIR = os.getenv("DEBUG_DIR", os.path.join(BASE_DIR, "debug_screenshots"))
@@ -29,7 +29,8 @@ async def process_single_case(page, case_record: dict):
     print(f"\n[*] Searching HOVER for Case No: {case_no} (Inst #{inst_num})...")
 
     try:
-        await page.goto(HOVER_SEARCH_URL, wait_until="networkidle", timeout=45000)
+        await page.goto(HOVER_SEARCH_URL, wait_until="domcontentloaded", timeout=45000)
+        await page.wait_for_timeout(2000)
 
         # 1. Enter Case Number
         case_input = page.locator("input#caseNumber, input[name='caseNumber'], input[placeholder*='Case Number']").first
