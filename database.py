@@ -5,7 +5,9 @@ from typing import Optional, List, Dict, Any
 DB_PATH = os.path.join(os.path.dirname(__file__), "hillsborough_records.db")
 
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=45.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
 
 def init_db():
     """Initializes the SQLite schema."""
