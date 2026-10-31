@@ -10,7 +10,7 @@ from stage1_ori import run_stage1_ori
 from stage2_hover import run_stage2_hover
 from orange_stage1 import run_orange_stage1
 from orange_run_daily import export_orange_daily_csv
-from storage import upload_file_to_cloud, notify_downstream_machine
+from storage import upload_file_to_cloud, notify_downstream_machine, verify_s3_contents
 from database import get_connection, init_db
 
 load_dotenv()
@@ -184,6 +184,9 @@ async def main():
             })
         except Exception as e:
             print(f"[-] Error in Orange County pipeline: {e}")
+
+    # 3. Live AWS S3 Verification Audit
+    verify_s3_contents()
 
 
 if __name__ == "__main__":
