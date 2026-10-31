@@ -181,127 +181,177 @@ async def run_stage1_ori(target_date: str = None) -> int:
                 print(f"[*] Found {len(rows)} rows on current page.")
 
                 for idx, row in enumerate(rows):
-                    row_text = await row.inner_text()
-                    if "LIS PENDENS" not in row_text.upper():
-                        continue
-
-                    # 8. In the Name column, click the linked party name
-                    party_link = row.locator("td a").first
-                    if not await party_link.is_visible():
-                        continue
-
-                    party_name = (await party_link.inner_text()).strip()
-                    print(f"\n--- [{total_processed + 1}] Processing: {party_name} ---")
-
-                    await party_link.click()
-                    await page.wait_for_timeout(2500)
-
-                    # 9. Extract Document Information (Instrument #)
-                    # First check the row cells directly (Hillsborough jsgrid has instrument # in one of the cells)
-                    instrument_number = None
                     try:
-                        cells = await row.locator("td").all_inner_texts()
-                        for c in cells:
-                            c_clean = c.strip()
-                            if re.match(r"^202[0-9]{7}$", c_clean):
-                                instrument_number = c_clean
-                                break
-                    except Exception:
-                        pass
+                        row_text = await row.inner_text()
+                        if "LIS PENDENS" not in row_text.upper():
+                            continue
 
-                    if not instrument_number:
-                        doc_info_panel = page.locator(".doc-info, #documentInfo, div[class*='document-info'], #dataPanel").first
-                        doc_info_text = await doc_info_panel.inner_text() if await doc_info_panel.is_visible() else ""
-                        inst_match = re.search(r"Instrument\s*(?:#|No\.?|Number)?\s*[:\s]*([0-9A-Z]+)", doc_info_text, re.I)
-                        if inst_match:
-                            instrument_number = inst_match.group(1).strip()
-                        else:
-                            full_modal_text = await page.content()
-                            fallback_match = re.search(r"Instrument\s*(?:#|No\.?)?\s*[:\s]*([0-9]{8,12})", full_modal_text, re.I)
-                            instrument_number = fallback_match.group(1) if fallback_match else f"INST_{datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}"
-
-                    print(f"    ├── Instrument #: {instrument_number}")
-
-                    # Check deduplication
-                    if is_instrument_recorded(instrument_number):
-                        print(f"    └── Already collected. Skipping download.")
-                        continue
-
-                    # 10. Prepare filename: Hillsborough_LP_[recording-date]_[instrument-number].pdf
-                    clean_date = target_date.replace("/", "-")
-                    filename = f"Hillsborough_LP_{clean_date}_{instrument_number}.pdf"
-                    pdf_path = os.path.join(DOWNLOAD_DIR, filename)
-
-                    # 11. Download the PDF
-                    download_success = False
-                    
-                    # Method A: Try iframe PDF.js toolbar download
-                    try:
-                        doc_frame = page.frame_locator("#docDisplay, iframe").first
-                        dl_btn = doc_frame.locator("button#download, #download, button[title*='Download'], [aria-label*='Download']").first
-                        if await dl_btn.is_visible():
-                            async with page.expect_download(timeout=10000) as download_info:
-                                await dl_btn.click()
-                            download = await download_info.value
-                            await download.save_as(pdf_path)
-                            download_success = True
-                            print(f"    ├── Saved PDF via iframe toolbar: {filename}")
-                    except Exception as dl_err:
-                        pass
-
-                    # Method B: Direct URL stream from iframe src / PDF.js query param
-                    if not download_success:
+                        # 8. Extract Instrument # from row cells first
+                        instrument_number = None
                         try:
-                            pdf_iframe = page.locator("#docDisplay, iframe[src*='pdf'], embed[src*='pdf']").first
-                            if await pdf_iframe.is_visible():
-                                src = await pdf_iframe.get_attribute("src")
-                                if src:
+                            cells = await row.locator("td").all_inner_texts()
+                            for c in cells:
+                                c_clean = c.strip()
+                                if re.match(r"^202[0-9]{7}$", c_clean):
+                                    instrument_number = c_clean
+                                    break
+                        except Exception:
+                            pass
+
+                        party_link = row.locator("td a").first
+                        party_name = (await party_link.inner_text()).strip() if await party_link.is_visible() else f"Record_{idx}"
+
+                        # Check deduplication BEFORE clicking
+                        if instrument_number and is_instrument_recorded(instrument_number):
+                            print(f"--- [{total_processed + 1}] {party_name} (#{instrument_number}): already collected. Skipping. ---")
+                            total_processed += 1
+                            continue
+
+                        print(f"\n--- [{total_processed + 1}] Processing: {party_name} ---")
+
+                        # Dismiss any leftover modal from previous actions
+                        try:
+                            await page.keyboard.press("Escape")
+                            await page.evaluate("""() => {
+                                const closeBtns = document.querySelectorAll('button.close, .ui-dialog-titlebar-close, [aria-label=\"Close\"], .modal-header .close, button:has-text(\"Close\")');
+                                closeBtns.forEach(b => { if (b.offsetParent !== null) b.click(); });
+                            }""")
+                            await page.wait_for_timeout(300)
+                        except Exception:
+                            pass
+
+                        # Click party link using direct JavaScript evaluation to bypass pointer intercepts
+                        try:
+                            await party_link.scroll_into_view_if_needed()
+                            await party_link.evaluate("el => el.click()")
+                        except Exception:
+                            await party_link.click(force=True)
+                        await page.wait_for_timeout(3000)
+
+                        if not instrument_number:
+                            doc_info_panel = page.locator(".doc-info, #documentInfo, div[class*='document-info'], #dataPanel").first
+                            doc_info_text = await doc_info_panel.inner_text() if await doc_info_panel.is_visible() else ""
+                            inst_match = re.search(r"Instrument\s*(?:#|No\.?|Number)?\s*[:\s]*([0-9A-Z]+)", doc_info_text, re.I)
+                            if inst_match:
+                                instrument_number = inst_match.group(1).strip()
+                            else:
+                                full_modal_text = await page.content()
+                                fallback_match = re.search(r"Instrument\s*(?:#|No\.?)?\s*[:\s]*([0-9]{8,12})", full_modal_text, re.I)
+                                instrument_number = fallback_match.group(1) if fallback_match else f"INST_{datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}"
+
+                        print(f"    ├── Instrument #: {instrument_number}")
+
+                        # 10. Prepare filename: Hillsborough_LP_[recording-date]_[instrument-number].pdf
+                        clean_date = target_date.replace("/", "-")
+                        filename = f"Hillsborough_LP_{clean_date}_{instrument_number}.pdf"
+                        pdf_path = os.path.join(DOWNLOAD_DIR, filename)
+
+                        # 11. Download the PDF
+                        download_success = False
+                        
+                        # Method A: Try iframe PDF.js toolbar download
+                        try:
+                            doc_frame = page.frame_locator("#docDisplay, iframe").first
+                            dl_btn = doc_frame.locator("button#download, #download, button[title*='Download'], [aria-label*='Download']").first
+                            if await dl_btn.is_visible():
+                                async with page.expect_download(timeout=10000) as download_info:
+                                    await dl_btn.click()
+                                download = await download_info.value
+                                await download.save_as(pdf_path)
+                                download_success = True
+                                print(f"    ├── Saved PDF via iframe toolbar: {filename}")
+                        except Exception:
+                            pass
+
+                        # Method B: Direct URL stream from iframe src / PDF.js query param
+                        if not download_success:
+                            try:
+                                pdf_iframe = page.locator("#docDisplay, iframe[src*='pdf'], embed[src*='pdf']").first
+                                if await pdf_iframe.is_visible():
+                                    src = await pdf_iframe.get_attribute("src")
+                                    if src:
+                                        import urllib.parse
+                                        full_src = urllib.parse.urljoin(page.url, src)
+                                        parsed = urllib.parse.urlparse(full_src)
+                                        qs = urllib.parse.parse_qs(parsed.query)
+                                        pdf_url = urllib.parse.urljoin(full_src, qs["file"][0]) if "file" in qs else full_src
+
+                                        if pdf_url.startswith("http"):
+                                            resp = await page.request.get(pdf_url)
+                                            if resp.status == 200:
+                                                with open(pdf_path, "wb") as f:
+                                                    f.write(await resp.body())
+                                                download_success = True
+                                                print(f"    ├── Saved PDF via direct stream: {filename}")
+                            except Exception as stream_err:
+                                print(f"    [!] Direct stream fetch: {stream_err}")
+
+                        # Method C: Search any iframe or embed in DOM for PDF stream
+                        if not download_success:
+                            try:
+                                doc_src = await page.evaluate("""() => {
+                                    const el = document.querySelector('#docDisplay, iframe[src*=\"pdf\"], embed[src*=\"pdf\"], object[data*=\"pdf\"], iframe');
+                                    return el ? (el.src || el.data || '') : '';
+                                }""")
+                                if doc_src and not doc_src.startswith("chrome"):
                                     import urllib.parse
-                                    full_src = urllib.parse.urljoin(page.url, src)
+                                    full_src = urllib.parse.urljoin(page.url, doc_src)
                                     parsed = urllib.parse.urlparse(full_src)
                                     qs = urllib.parse.parse_qs(parsed.query)
                                     pdf_url = urllib.parse.urljoin(full_src, qs["file"][0]) if "file" in qs else full_src
-
                                     if pdf_url.startswith("http"):
                                         resp = await page.request.get(pdf_url)
                                         if resp.status == 200:
                                             with open(pdf_path, "wb") as f:
                                                 f.write(await resp.body())
                                             download_success = True
-                                            print(f"    ├── Saved PDF via direct stream: {filename}")
-                        except Exception as stream_err:
-                            print(f"    [!] Direct stream fetch: {stream_err}")
+                                            print(f"    ├── Saved PDF via DOM stream evaluation: {filename}")
+                            except Exception:
+                                pass
 
-                    # Upload original vector PDF to S3 Cloud Bucket if configured
-                    cloud_pdf_url = pdf_path
-                    if download_success and os.path.exists(pdf_path):
-                        uploaded_url = upload_file_to_cloud(pdf_path, f"hillsborough/{clean_date}/{filename}")
-                        if uploaded_url:
-                            cloud_pdf_url = uploaded_url
+                        # Upload original vector PDF to S3 Cloud Bucket if configured
+                        cloud_pdf_url = pdf_path
+                        if download_success and os.path.exists(pdf_path):
+                            uploaded_url = upload_file_to_cloud(pdf_path, f"hillsborough/{clean_date}/{filename}")
+                            if uploaded_url:
+                                cloud_pdf_url = uploaded_url
 
-                    # 12. Parse Page 1 for Case No.
-                    case_no = ""
-                    if download_success and os.path.exists(pdf_path):
-                        case_no = extract_case_number_from_pdf(pdf_path)
-                        print(f"    ├── Extracted Case No: '{case_no}'")
-                    else:
-                        print(f"    [!] Warning: PDF could not be saved for {instrument_number}")
+                        # 12. Parse Page 1 for Case No.
+                        case_no = ""
+                        if download_success and os.path.exists(pdf_path):
+                            case_no = extract_case_number_from_pdf(pdf_path)
+                            print(f"    ├── Extracted Case No: '{case_no}'")
+                        else:
+                            print(f"    [!] Warning: PDF could not be saved for {instrument_number}")
 
-                    # Store in SQLite database
-                    insert_or_update_lp(
-                        instrument_number=instrument_number,
-                        recording_date=target_date,
-                        party_name=party_name,
-                        case_number=case_no,
-                        pdf_path=cloud_pdf_url if download_success else ""
-                    )
-                    total_processed += 1
+                        # Store in SQLite database
+                        insert_or_update_lp(
+                            instrument_number=instrument_number,
+                            recording_date=target_date,
+                            party_name=party_name,
+                            case_number=case_no,
+                            pdf_path=cloud_pdf_url if download_success else ""
+                        )
+                        total_processed += 1
 
-                    # 13. Click the X at the upper-right corner of the document popup
-                    close_btn = page.locator("button.close, .ui-dialog-titlebar-close, [aria-label='Close'], button:has-text('✕')").first
-                    if await close_btn.is_visible():
-                        await close_btn.click()
-                    await page.wait_for_timeout(1000)
+                        # 13. Dismiss/Close the document popup
+                        try:
+                            await page.keyboard.press("Escape")
+                            close_btn = page.locator("button.close, .ui-dialog-titlebar-close, [aria-label='Close'], button:has-text('✕')").first
+                            if await close_btn.is_visible():
+                                await close_btn.click()
+                        except Exception:
+                            pass
+                        await page.wait_for_timeout(1000)
+
+                    except Exception as row_err:
+                        print(f"    [!] Error on row {idx + 1}: {row_err}. Dismissing modal and proceeding...")
+                        try:
+                            await page.keyboard.press("Escape")
+                            await page.wait_for_timeout(500)
+                        except Exception:
+                            pass
+                        continue
 
                 # Pagination: Check for Next Page
                 next_btn = page.locator("a:has-text('Next'), a[title*='next' i], .k-pager-next:not(.k-state-disabled)").first
