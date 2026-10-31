@@ -197,28 +197,34 @@ async def run_stage1_ori(target_date: str = None) -> int:
                     await page.wait_for_timeout(2500)
 
                     # 9. Extract Document Information (Instrument #)
-                    doc_info_panel = page.locator(".doc-info, #documentInfo, div[class*='document-info']").first
-                    doc_info_text = await doc_info_panel.inner_text() if await doc_info_panel.is_visible() else ""
+                    # First check the row cells directly (Hillsborough jsgrid has instrument # in one of the cells)
+                    instrument_number = None
+                    try:
+                        cells = await row.locator("td").all_inner_texts()
+                        for c in cells:
+                            c_clean = c.strip()
+                            if re.match(r"^202[0-9]{7}$", c_clean):
+                                instrument_number = c_clean
+                                break
+                    except Exception:
+                        pass
 
-                    inst_match = re.search(r"Instrument\s*(?:#|No\.?|Number)?\s*[:\s]*([0-9A-Z]+)", doc_info_text, re.I)
-                    if inst_match:
-                        instrument_number = inst_match.group(1).strip()
-                    else:
-                        # Fallback: check all modal text for instrument # pattern
-                        full_modal_text = await page.content()
-                        fallback_match = re.search(r"Instrument\s*(?:#|No\.?)?\s*[:\s]*([0-9]{8,12})", full_modal_text, re.I)
-                        instrument_number = fallback_match.group(1) if fallback_match else f"INST_{datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}"
+                    if not instrument_number:
+                        doc_info_panel = page.locator(".doc-info, #documentInfo, div[class*='document-info'], #dataPanel").first
+                        doc_info_text = await doc_info_panel.inner_text() if await doc_info_panel.is_visible() else ""
+                        inst_match = re.search(r"Instrument\s*(?:#|No\.?|Number)?\s*[:\s]*([0-9A-Z]+)", doc_info_text, re.I)
+                        if inst_match:
+                            instrument_number = inst_match.group(1).strip()
+                        else:
+                            full_modal_text = await page.content()
+                            fallback_match = re.search(r"Instrument\s*(?:#|No\.?)?\s*[:\s]*([0-9]{8,12})", full_modal_text, re.I)
+                            instrument_number = fallback_match.group(1) if fallback_match else f"INST_{datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}"
 
                     print(f"    ├── Instrument #: {instrument_number}")
 
                     # Check deduplication
                     if is_instrument_recorded(instrument_number):
                         print(f"    └── Already collected. Skipping download.")
-                        # Close popup modal
-                        close_btn = page.locator("button.close, .ui-dialog-titlebar-close, [aria-label='Close'], button:has-text('✕')").first
-                        if await close_btn.is_visible():
-                            await close_btn.click()
-                        await page.wait_for_timeout(1000)
                         continue
 
                     # 10. Prepare filename: Hillsborough_LP_[recording-date]_[instrument-number].pdf
@@ -228,30 +234,43 @@ async def run_stage1_ori(target_date: str = None) -> int:
 
                     # 11. Download the PDF
                     download_success = False
+                    
+                    # Method A: Try iframe PDF.js toolbar download
                     try:
-                        # Look for download button in the toolbar
-                        download_btn = page.locator(
-                            "button[title='Download'], [aria-label='Download'], button#download, .pdf-toolbar button.download"
-                        ).first
-                        
-                        async with page.expect_download(timeout=15000) as download_info:
-                            await download_btn.click()
-                        download = await download_info.value
-                        await download.save_as(pdf_path)
-                        download_success = True
-                        print(f"    ├── Saved PDF: {filename}")
+                        doc_frame = page.frame_locator("#docDisplay, iframe").first
+                        dl_btn = doc_frame.locator("button#download, #download, button[title*='Download'], [aria-label*='Download']").first
+                        if await dl_btn.is_visible():
+                            async with page.expect_download(timeout=10000) as download_info:
+                                await dl_btn.click()
+                            download = await download_info.value
+                            await download.save_as(pdf_path)
+                            download_success = True
+                            print(f"    ├── Saved PDF via iframe toolbar: {filename}")
                     except Exception as dl_err:
-                        print(f"    [!] Toolbar click download missed: {dl_err}. Checking iframe stream...")
-                        # Fallback: retrieve directly from PDF iframe source
-                        pdf_iframe = page.locator("iframe[src*='pdf'], embed[src*='pdf'], iframe#pdfViewer").first
-                        if await pdf_iframe.is_visible():
-                            src = await pdf_iframe.get_attribute("src")
-                            if src and "blob:" not in src:
-                                resp = await page.request.get(src)
-                                with open(pdf_path, "wb") as f:
-                                    f.write(await resp.body())
-                                download_success = True
-                                print(f"    ├── Saved PDF via direct stream: {filename}")
+                        pass
+
+                    # Method B: Direct URL stream from iframe src / PDF.js query param
+                    if not download_success:
+                        try:
+                            pdf_iframe = page.locator("#docDisplay, iframe[src*='pdf'], embed[src*='pdf']").first
+                            if await pdf_iframe.is_visible():
+                                src = await pdf_iframe.get_attribute("src")
+                                if src:
+                                    import urllib.parse
+                                    full_src = urllib.parse.urljoin(page.url, src)
+                                    parsed = urllib.parse.urlparse(full_src)
+                                    qs = urllib.parse.parse_qs(parsed.query)
+                                    pdf_url = urllib.parse.urljoin(full_src, qs["file"][0]) if "file" in qs else full_src
+
+                                    if pdf_url.startswith("http"):
+                                        resp = await page.request.get(pdf_url)
+                                        if resp.status == 200:
+                                            with open(pdf_path, "wb") as f:
+                                                f.write(await resp.body())
+                                            download_success = True
+                                            print(f"    ├── Saved PDF via direct stream: {filename}")
+                        except Exception as stream_err:
+                            print(f"    [!] Direct stream fetch: {stream_err}")
 
                     # Upload original vector PDF to S3 Cloud Bucket if configured
                     cloud_pdf_url = pdf_path
