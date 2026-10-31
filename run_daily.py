@@ -292,10 +292,50 @@ async def run_sarasota_flow(target_date: str, county_summaries: dict):
         county_summaries["sarasota"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
 
 
+async def run_manatee_flow(target_date: str, skip_hover: bool, county_summaries: dict):
+    print(f"\n>>> [STARTING] MANATEE COUNTY PIPELINE <<<")
+    try:
+        from manatee_stage1 import run_manatee_stage1
+        from database import export_county_daily_csv
+        manatee_lps = await run_manatee_stage1(target_date)
+        if not skip_hover:
+            try:
+                from manatee_stage2 import run_manatee_stage2
+                await run_manatee_stage2()
+            except Exception as s2_err:
+                print(f"[!] Manatee Stage 2 debt extraction note: {s2_err}")
+
+        manatee_csv = export_county_daily_csv("manatee", target_date)
+
+        print(f"\n=======================================================")
+        print(f" MANATEE COUNTY SUMMARY FOR {target_date}")
+        print(f"=======================================================")
+        print(f"  • Total Lis Pendens Downloaded: {manatee_lps}")
+        print(f"  • Manatee County Report:        {manatee_csv}")
+        print(f"=======================================================\n")
+
+        county_summaries["manatee"] = {
+            "count": manatee_lps,
+            "status": "COMPLETED",
+            "report": f"manatee/{target_date.replace('/', '-')}/{manatee_csv}"
+        }
+
+        notify_downstream_machine({
+            "county": "manatee",
+            "target_date": target_date,
+            "total_lps_collected": manatee_lps,
+            "status": "COMPLETED",
+            "csv_report": f"manatee/{target_date.replace('/', '-')}/{manatee_csv}"
+        })
+    except Exception as e:
+        print(f"[-] Error in Manatee County pipeline: {e}")
+        county_summaries["manatee"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Florida Court Lis Pendens Multi-County Pipeline")
     parser.add_argument("--date", type=str, help="Target recording date in MM/DD/YYYY format.")
-    parser.add_argument("--county", type=str, default="all", choices=["all", "hillsborough", "orange", "duval", "broward", "sarasota"], help="Target county")
+    parser.add_argument("--county", type=str, default="all", choices=["all", "hillsborough", "orange", "duval", "broward", "sarasota", "manatee"], help="Target county")
     parser.add_argument("--today", action="store_true", help="Force collection for today.")
     parser.add_argument("--skip-hover", action="store_true", help="Skip Stage 2 (docket search).")
     args = parser.parse_args()
@@ -325,6 +365,8 @@ async def main():
         tasks.append(run_broward_flow(target_date, county_summaries))
     if args.county in ("all", "sarasota"):
         tasks.append(run_sarasota_flow(target_date, county_summaries))
+    if args.county in ("all", "manatee"):
+        tasks.append(run_manatee_flow(target_date, args.skip_hover, county_summaries))
 
     print(f"[*] Spawning {len(tasks)} parallel county extraction pipelines concurrently...")
     await asyncio.gather(*tasks, return_exceptions=True)
