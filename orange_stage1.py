@@ -58,6 +58,12 @@ async def run_orange_stage1(target_date: str = None) -> int:
             # Accept disclaimer
             print("[*] Accepting portal legal disclaimer...")
             try:
+                for frame in page.frames:
+                    if "recaptcha" in frame.url:
+                        checkbox = frame.locator("#recaptcha-anchor, .recaptcha-checkbox").first
+                        if await checkbox.is_visible():
+                            await checkbox.click(timeout=5000)
+                            await page.wait_for_timeout(3000)
                 await page.evaluate("""() => {
                     const btn = document.querySelector('#submitDisclaimerAccept') || document.querySelector('input[value=\"I Accept\"]');
                     if (btn) { btn.disabled = false; btn.click(); }
@@ -66,9 +72,20 @@ async def run_orange_stage1(target_date: str = None) -> int:
                 pass
             await page.wait_for_timeout(3000)
 
-            # Navigate to Official Records search page directly
+            # Navigate to Official Records search form
             print(f"[*] Navigating to Official Records search form...")
-            await page.goto(ORANGE_SEARCH_URL, wait_until="domcontentloaded", timeout=30000)
+            nav_link = page.locator("a[href*='search/officialrecords'], a[href*='officialrecords'], a:has-text('Official Records'), .ui-btn:has-text('Official Records')").first
+            try:
+                if await nav_link.is_visible():
+                    print("[*] Found Official Records link, clicking...")
+                    await nav_link.click()
+                else:
+                    print("[*] Official Records link not immediately visible, navigating to search URL...")
+                    await page.goto(ORANGE_SEARCH_URL, wait_until="domcontentloaded", timeout=30000)
+            except Exception as nav_e:
+                print(f"[!] Navigating to search URL fallback: {nav_e}")
+                await page.goto(ORANGE_SEARCH_URL, wait_until="domcontentloaded", timeout=30000)
+
             await page.wait_for_timeout(3000)
             print(f"[*] Loaded: {page.url} | Title: '{await page.title()}'")
 

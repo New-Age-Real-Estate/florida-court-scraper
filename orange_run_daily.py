@@ -47,7 +47,7 @@ def export_orange_daily_csv(target_date: str) -> str:
         cur.execute("""
             SELECT instrument_number, recording_date, party_name, case_number, pdf_path, debt_amount
             FROM lis_pendens
-            WHERE recording_date = ?
+            WHERE recording_date = ? AND (pdf_path LIKE '%orange%' OR party_name LIKE '%Orange%')
             ORDER BY created_at DESC
         """, (target_date,))
         rows = [dict(r) for r in cur.fetchall()]

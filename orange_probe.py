@@ -22,7 +22,7 @@ async def probe_orange_comptroller():
             print(f"[*] Navigating to {url}...")
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(3000)
-            print(f"[*] Final URL: {page.url} | Title: '{await page.title()}'")
+            print(f"[*] Initial URL: {page.url} | Title: '{await page.title()}'")
 
             # Check for reCAPTCHA iframe
             recaptcha_frame = None
@@ -38,38 +38,91 @@ async def probe_orange_comptroller():
                     checkbox = recaptcha_frame.locator("#recaptcha-anchor, .recaptcha-checkbox").first
                     await checkbox.click(timeout=5000)
                     print("[+] Clicked reCAPTCHA checkbox!")
-                    await page.wait_for_timeout(4000)
+                    await page.wait_for_timeout(3000)
                 except Exception as e:
                     print(f"[-] Could not click reCAPTCHA: {e}")
 
-            # Check submit button state
-            btn = page.locator("#submitDisclaimerAccept")
-            if await btn.is_visible():
-                is_disabled = await btn.is_disabled()
-                print(f"[*] Submit button visible. Disabled: {is_disabled}")
-                # Try clicking or enabling
-                await page.evaluate("() => { const b = document.querySelector('#submitDisclaimerAccept'); if (b) { b.disabled = false; b.click(); } }")
-                await page.wait_for_timeout(3000)
-                print(f"[*] Post-disclaimer URL: {page.url} | Title: '{await page.title()}'")
+            # Accept disclaimer
+            print("[*] Submitting disclaimer acceptance...")
+            await page.evaluate("""() => {
+                const b = document.querySelector('#submitDisclaimerAccept') || document.querySelector('input[value=\"I Accept\"]');
+                if (b) { b.disabled = false; b.click(); }
+            }""")
+            await page.wait_for_timeout(4000)
+            print(f"[*] Post-disclaimer URL: {page.url} | Title: '{await page.title()}'")
 
-            # Navigate to Official Records search form
-            search_url = "https://selfservice.or.occompt.com/ssweb/search/officialrecords"
-            print(f"[*] Navigating to search form: {search_url}...")
-            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(3000)
-            print(f"[*] Search page URL: {page.url} | Title: '{await page.title()}'")
+            # Discover all navigation links/tiles on the landing page
+            links = await page.locator("a, button, div.tile, .ui-btn").all()
+            print(f"[*] Discovered {len(links)} navigation elements on landing page:")
+            search_target = None
+            for idx, el in enumerate(links[:35]):
+                tag = await el.evaluate("el => el.tagName")
+                href = await el.get_attribute("href") or ""
+                txt = (await el.inner_text()).strip().replace('\n', ' ')
+                cid = await el.get_attribute("id") or ""
+                if txt or href:
+                    print(f"    [{idx}] <{tag} id='{cid}' href='{href}'> '{txt[:50]}'")
+                if not search_target and ("official" in (txt + href).lower() or "search/officialrecords" in href.lower()):
+                    search_target = el
 
-            # List visible forms, inputs, selects, and buttons on search page
-            inputs = await page.locator("input, button, select, a.ui-btn").all()
-            print(f"[*] Total elements on search page: {len(inputs)}")
-            for idx, inp in enumerate(inputs[:30]):
+            # Navigate to Search Page via link click
+            if search_target:
+                print(f"[*] Clicking discovered Official Records link...")
+                await search_target.click()
+            else:
+                print("[*] Searching for any search link or menu...")
+                fallback_link = page.locator("a[href*='search/officialrecords'], a[href*='officialrecords'], a:has-text('Official Records')").first
+                if await fallback_link.is_visible():
+                    await fallback_link.click()
+                else:
+                    await page.goto("https://selfservice.or.occompt.com/ssweb/search/officialrecords", wait_until="domcontentloaded", timeout=30000)
+
+            await page.wait_for_timeout(4000)
+            print(f"[*] Current Page URL: {page.url} | Title: '{await page.title()}'")
+
+            # Inspect all inputs, selects, buttons on current page
+            inputs = await page.locator("input, select, button, a.ui-btn").all()
+            print(f"[*] Total form controls: {len(inputs)}")
+            for idx, inp in enumerate(inputs[:40]):
                 tag = await inp.evaluate("el => el.tagName")
                 inp_id = await inp.get_attribute("id") or ""
                 inp_name = await inp.get_attribute("name") or ""
                 inp_type = await inp.get_attribute("type") or ""
                 inp_placeholder = await inp.get_attribute("placeholder") or ""
-                text = (await inp.inner_text()).strip()[:40] if tag in ("BUTTON", "A") else ""
-                print(f"    [{idx}] <{tag} id='{inp_id}' name='{inp_name}' type='{inp_type}' placeholder='{inp_placeholder}'> {text}")
+                val = await inp.get_attribute("value") or ""
+                txt = (await inp.inner_text()).strip()[:30] if tag in ("BUTTON", "A") else ""
+                print(f"    [{idx}] <{tag} id='{inp_id}' name='{inp_name}' type='{inp_type}' placeholder='{inp_placeholder}' value='{val}'> {txt}")
+
+            # Test entering date and document type
+            target_date = "10/22/2026"
+            date_from = page.locator("input[name*='recordingDate-from'], input[name*='recordedDateStart'], input[name*='dateFrom'], input#recordingDate-from, input#recordedDateStart, input#dateFrom, input[placeholder*='MM/DD/YYYY']").first
+            date_to = page.locator("input[name*='recordingDate-to'], input[name*='recordedDateEnd'], input[name*='dateTo'], input#recordingDate-to, input#recordedDateEnd, input#dateTo").first
+
+            if await date_from.is_visible():
+                print(f"[*] Filling recording dates with {target_date}...")
+                await date_from.fill(target_date)
+            if await date_to.is_visible():
+                await date_to.fill(target_date)
+
+            doc_type_input = page.locator("input[name*='docType'], input#docType, input[placeholder*='Doc Type'], input[name*='documentType']").first
+            if await doc_type_input.is_visible():
+                print("[*] Filling docType input with 'LP'...")
+                await doc_type_input.fill("LP")
+                await page.keyboard.press("Tab")
+
+            search_btn = page.locator("button#submitSearch, input#btnSearch, input[value='Search'], button#btnSearch, button:has-text('Search'), a.ui-btn:has-text('Search'), input[type='submit']").first
+            if await search_btn.is_visible():
+                print("[*] Submitting search form...")
+                await search_btn.click()
+                await page.wait_for_timeout(5000)
+                print(f"[*] Post-search URL: {page.url} | Title: '{await page.title()}'")
+
+                # Check for results
+                rows = await page.locator("table tr:not(:first-child)").all()
+                print(f"[*] Found {len(rows)} table rows in search results!")
+                for idx, r in enumerate(rows[:5]):
+                    row_txt = (await r.inner_text()).replace('\n', ' | ')
+                    print(f"    [Row {idx+1}] {row_txt[:120]}")
 
             os.makedirs("downloads/debug_orange", exist_ok=True)
             await page.screenshot(path="downloads/debug_orange/comptroller_search_probe.png", full_page=True)
@@ -102,30 +155,23 @@ async def probe_orange_clerk_of_courts():
             await page.wait_for_timeout(2000)
             print(f"[*] Final URL: {page.url} | Title: '{await page.title()}'")
 
-            # Look for DateFrom and DateTo
-            date_from = page.locator("#DateFrom, input[name='DateFrom']").first
-            date_to = page.locator("#DateTo, input[name='DateTo']").first
-            search_btn = page.locator("input[type='submit'][value*='Search'], button:has-text('Search'), input#btnSearch").first
+            # Inspect all selects and inputs
+            selects = await page.locator("select").all()
+            for s in selects:
+                sid = await s.get_attribute("id") or ""
+                sname = await s.get_attribute("name") or ""
+                opts = await s.locator("option").all_inner_texts()
+                print(f"    <SELECT id='{sid}' name='{sname}'> Options: {opts[:10]}")
 
-            target_date = "10/22/2026"
-            if await date_from.is_visible() and await date_to.is_visible():
-                print(f"[*] Filling DateFrom and DateTo with {target_date}...")
-                await date_from.fill(target_date)
-                await date_to.fill(target_date)
-                await page.wait_for_timeout(500)
-
-                if await search_btn.is_visible():
-                    print("[*] Clicking Search on myEClerk...")
-                    await search_btn.click()
-                    await page.wait_for_timeout(5000)
-                    print(f"[*] Search results page URL: {page.url} | Title: '{await page.title()}'")
-
-                    # Check for results table
-                    rows = await page.locator("table tbody tr, table tr:not(:first-child)").all()
-                    print(f"[*] Found {len(rows)} result rows in myEClerk Civil search!")
-                    for idx, r in enumerate(rows[:5]):
-                        txt = (await r.inner_text()).replace('\n', ' | ')
-                        print(f"    [Row {idx+1}] {txt[:120]}")
+            inputs = await page.locator("input, button").all()
+            for inp in inputs[:15]:
+                itag = await inp.evaluate("el => el.tagName")
+                iid = await inp.get_attribute("id") or ""
+                iname = await inp.get_attribute("name") or ""
+                itype = await inp.get_attribute("type") or ""
+                ival = await inp.get_attribute("value") or ""
+                itxt = (await inp.inner_text()).strip()
+                print(f"    <{itag} id='{iid}' name='{iname}' type='{itype}' value='{ival}'> {itxt}")
 
             os.makedirs("downloads/debug_orange", exist_ok=True)
             await page.screenshot(path="downloads/debug_orange/myeclerk_probe.png", full_page=True)
