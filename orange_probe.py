@@ -65,17 +65,20 @@ async def probe_orange_comptroller():
                 if not search_target and ("official" in (txt + href).lower() or "search/officialrecords" in href.lower()):
                     search_target = el
 
-            # Navigate to Search Page via link click
-            if search_target:
-                print(f"[*] Clicking discovered Official Records link...")
-                await search_target.click()
-            else:
-                print("[*] Searching for any search link or menu...")
-                fallback_link = page.locator("a[href*='search/officialrecords'], a[href*='officialrecords'], a:has-text('Official Records')").first
-                if await fallback_link.is_visible():
-                    await fallback_link.click()
-                else:
-                    await page.goto("https://selfservice.or.occompt.com/ssweb/search/officialrecords", wait_until="domcontentloaded", timeout=30000)
+            # Navigate to Search Page via DOM click
+            print("[*] Navigating to Official Records search form via DOM...")
+            try:
+                clicked = await page.evaluate("""() => {
+                    const el = document.querySelector("a[href*='search/DOCSEARCH'], a[href*='search/'], a[href*='officialrecords']");
+                    if (el) { el.click(); return el.href; }
+                    const allLinks = Array.from(document.querySelectorAll('a'));
+                    const recLink = allLinks.find(a => (a.textContent || '').includes('Official Records') || (a.textContent || '').includes('Search'));
+                    if (recLink) { recLink.click(); return recLink.href; }
+                    return null;
+                }""")
+                print(f"[+] Clicked navigation link via DOM: {clicked}")
+            except Exception as e:
+                print(f"[-] DOM click exception: {e}")
 
             await page.wait_for_timeout(4000)
             print(f"[*] Current Page URL: {page.url} | Title: '{await page.title()}'")

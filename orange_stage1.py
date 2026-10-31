@@ -74,19 +74,28 @@ async def run_orange_stage1(target_date: str = None) -> int:
 
             # Navigate to Official Records search form
             print(f"[*] Navigating to Official Records search form...")
-            nav_link = page.locator("a[href*='search/officialrecords'], a[href*='officialrecords'], a:has-text('Official Records'), .ui-btn:has-text('Official Records')").first
             try:
-                if await nav_link.is_visible():
-                    print("[*] Found Official Records link, clicking...")
-                    await nav_link.click()
-                else:
-                    print("[*] Official Records link not immediately visible, navigating to search URL...")
-                    await page.goto(ORANGE_SEARCH_URL, wait_until="domcontentloaded", timeout=30000)
+                clicked_info = await page.evaluate("""() => {
+                    const el = document.querySelector("a[href*='search/DOCSEARCH'], a[href*='search/'], a[href*='officialrecords']");
+                    if (el) {
+                        el.click();
+                        return el.href;
+                    }
+                    const allLinks = Array.from(document.querySelectorAll('a'));
+                    const recLink = allLinks.find(a => (a.textContent || '').includes('Official Records') || (a.textContent || '').includes('Search'));
+                    if (recLink) {
+                        recLink.click();
+                        return recLink.href;
+                    }
+                    return null;
+                }""")
+                print(f"[*] Triggered DOM click on search link: {clicked_info}")
             except Exception as nav_e:
-                print(f"[!] Navigating to search URL fallback: {nav_e}")
-                await page.goto(ORANGE_SEARCH_URL, wait_until="domcontentloaded", timeout=30000)
+                print(f"[!] DOM click fallback: {nav_e}")
+                nav_link = page.locator("a[href*='search/'], a[href*='officialrecords'], a:has-text('Official Records')").first
+                await nav_link.click(force=True, timeout=5000)
 
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(4000)
             print(f"[*] Loaded: {page.url} | Title: '{await page.title()}'")
 
             print(f"[*] Entering date range: {target_date}...")
