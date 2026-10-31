@@ -1,5 +1,6 @@
 import os
 import asyncio
+import urllib.parse
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -98,49 +99,64 @@ async def run_orange_stage1(target_date: str = None) -> int:
             await page.wait_for_timeout(4000)
             print(f"[*] Loaded: {page.url} | Title: '{await page.title()}'")
 
-            print(f"[*] Entering date range: {target_date}...")
-            start_date_el = page.locator("#field_RecordingDateID_DOT_StartDate, input[name*='StartDate']").first
-            end_date_el = page.locator("#field_RecordingDateID_DOT_EndDate, input[name*='EndDate']").first
+            print(f"[*] Populating date range ({target_date}) and document type (LP) via DOM...")
+            form_status = await page.evaluate("""(targetDate) => {
+                const s = document.querySelector('#field_RecordingDateID_DOT_StartDate') ||
+                          document.querySelector("input[name*='StartDate']");
+                const e = document.querySelector('#field_RecordingDateID_DOT_EndDate') ||
+                          document.querySelector("input[name*='EndDate']");
+                const doc = document.querySelector('#field_selfservice_documentTypes') ||
+                            document.querySelector("input[name*='documentTypes']");
+                
+                if (s) {
+                    s.value = targetDate;
+                    s.dispatchEvent(new Event('input', {bubbles: true}));
+                    s.dispatchEvent(new Event('change', {bubbles: true}));
+                    s.dispatchEvent(new Event('blur', {bubbles: true}));
+                }
+                if (e) {
+                    e.value = targetDate;
+                    e.dispatchEvent(new Event('input', {bubbles: true}));
+                    e.dispatchEvent(new Event('change', {bubbles: true}));
+                    e.dispatchEvent(new Event('blur', {bubbles: true}));
+                }
+                if (doc) {
+                    doc.value = 'LP';
+                    doc.dispatchEvent(new Event('input', {bubbles: true}));
+                    doc.dispatchEvent(new Event('change', {bubbles: true}));
+                    doc.dispatchEvent(new Event('blur', {bubbles: true}));
+                }
+                return {
+                    start: s ? s.value : null,
+                    end: e ? e.value : null,
+                    doc: doc ? doc.value : null
+                };
+            }""", target_date)
+            print(f"[*] Form values configured: {form_status}")
 
-            if await start_date_el.is_visible():
-                await start_date_el.click()
-                await start_date_el.fill(target_date)
-                await start_date_el.press("Tab")
-
-            if await end_date_el.is_visible():
-                await end_date_el.click()
-                await end_date_el.fill(target_date)
-                await end_date_el.press("Tab")
-
-            # Fire change events on date inputs
-            await page.evaluate("""() => {
-                const s = document.querySelector('#field_RecordingDateID_DOT_StartDate');
-                const e = document.querySelector('#field_RecordingDateID_DOT_EndDate');
-                if (s) { s.dispatchEvent(new Event('input', {bubbles: true})); s.dispatchEvent(new Event('change', {bubbles: true})); }
-                if (e) { e.dispatchEvent(new Event('input', {bubbles: true})); e.dispatchEvent(new Event('change', {bubbles: true})); }
-            }""")
-
-            print("[*] Filtering by Document Type: Lis Pendens (LP)...")
             doc_type_el = page.locator("#field_selfservice_documentTypes, input[name*='documentTypes']").first
             if await doc_type_el.is_visible():
-                await doc_type_el.click()
-                await doc_type_el.fill("LP")
-                await doc_type_el.press("Tab")
+                try:
+                    await doc_type_el.fill("LP", force=True)
+                    await page.wait_for_timeout(500)
+                    ac_item = page.locator(".ui-autocomplete li, .ui-menu-item, div.typeahead li, [role='option']").first
+                    if await ac_item.is_visible():
+                        await ac_item.click(force=True, timeout=2000)
+                    else:
+                        await page.keyboard.press("Tab")
+                except Exception:
+                    pass
 
-            print(f"[*] Submitting search...")
-            search_btn = page.locator("button:text-is('Search')").first
-            if await search_btn.is_visible():
-                await search_btn.click(force=True)
-            else:
-                await page.evaluate("""() => {
-                    const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Search') ||
-                                document.querySelector('button[type=\"submit\"], input[value=\"Search\"]');
-                    if (btn) btn.click();
-                }""")
+            print(f"[*] Submitting search via DOM...")
+            await page.evaluate("""() => {
+                const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Search') ||
+                            document.querySelector('button[type=\"submit\"], input[value=\"Search\"]');
+                if (btn) btn.click();
+            }""")
             await page.wait_for_timeout(6000)
             print(f"[*] Post-search URL: {page.url} | Title: '{await page.title()}'")
 
-            row_selector = "table tbody tr, table tr:not(:first-child), div[class*='results'] tr, .ui-table tr:not(:first-child)"
+            row_selector = "table tbody tr, table.results tr:not(:first-child), table[class*='results'] tr:not(:first-child), .ui-table tbody tr, table tr:not(:first-child)"
             result_rows = page.locator(row_selector)
 
             try:
@@ -176,13 +192,25 @@ async def run_orange_stage1(target_date: str = None) -> int:
 
                     print(f"\n--- [{total_processed + 1}] Processing Orange County LP: {party_name} (#{instrument_number}) ---")
 
-                    try:
-                        await party_link.click(timeout=10000)
-                    except Exception:
-                        await party_link.click(force=True, timeout=10000)
-                    await page.wait_for_timeout(2500)
+                    link_href = await party_link.get_attribute("href") if await party_link.is_visible() else None
+                    doc_page = None
 
-                    doc_content = await page.content()
+                    if link_href and not link_href.startswith("javascript:"):
+                        full_doc_url = urllib.parse.urljoin(page.url, link_href)
+                        print(f"    ├── Opening document in new page: {full_doc_url}")
+                        doc_page = await context.new_page()
+                        await doc_page.goto(full_doc_url, wait_until="domcontentloaded", timeout=30000)
+                        await doc_page.wait_for_timeout(2000)
+                        target_page = doc_page
+                    else:
+                        try:
+                            await party_link.click(timeout=8000)
+                        except Exception:
+                            await party_link.click(force=True, timeout=8000)
+                        await page.wait_for_timeout(2500)
+                        target_page = page
+
+                    doc_content = await target_page.content()
                     case_no = extract_orange_case_number(cells, doc_content)
                     print(f"    ├── Extracted Case No: '{case_no}'")
 
@@ -190,7 +218,7 @@ async def run_orange_stage1(target_date: str = None) -> int:
                     filename = f"Orange_LP_{clean_date}_{instrument_number}.pdf"
                     pdf_path = os.path.join(DOWNLOAD_DIR, filename)
 
-                    download_success = await download_orange_vector_pdf(page, pdf_path)
+                    download_success = await download_orange_vector_pdf(target_page, pdf_path)
                     cloud_url = pdf_path
                     if download_success and os.path.exists(pdf_path):
                         print(f"    ├── Downloaded Vector PDF: {filename} ({os.path.getsize(pdf_path)} bytes)")
@@ -204,24 +232,23 @@ async def run_orange_stage1(target_date: str = None) -> int:
                         recording_date=target_date,
                         party_name=party_name,
                         case_number=case_no,
-                        pdf_path=cloud_url if download_success else ""
+                        pdf_path=cloud_url if download_success else "",
+                        county="orange"
                     )
                     total_processed += 1
 
-                    back_btn = page.locator("a:has-text('Back to Results'), input[value*='Back'], button:has-text('Back')").first
-                    if await back_btn.is_visible():
-                        await back_btn.click()
+                    if doc_page:
+                        await doc_page.close()
                     else:
-                        await page.go_back()
-                    await page.wait_for_timeout(1500)
+                        back_btn = page.locator("a:has-text('Back to Results'), input[value*='Back'], button:has-text('Back')").first
+                        if await back_btn.is_visible():
+                            await back_btn.click(force=True)
+                        else:
+                            await page.go_back()
+                        await page.wait_for_timeout(2000)
 
                 except Exception as row_err:
                     print(f"    [!] Error row {idx + 1}: {row_err}")
-                    try:
-                        await page.go_back()
-                        await page.wait_for_timeout(1000)
-                    except Exception:
-                        pass
                     continue
 
             await browser.close()
