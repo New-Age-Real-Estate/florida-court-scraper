@@ -117,7 +117,7 @@ def get_daily_summary(target_date: str) -> dict:
 async def main():
     parser = argparse.ArgumentParser(description="Florida Court Lis Pendens Multi-County Pipeline")
     parser.add_argument("--date", type=str, help="Target recording date in MM/DD/YYYY format.")
-    parser.add_argument("--county", type=str, default="all", choices=["all", "hillsborough", "orange"], help="Target county")
+    parser.add_argument("--county", type=str, default="all", choices=["all", "hillsborough", "orange", "duval", "broward", "sarasota"], help="Target county")
     parser.add_argument("--today", action="store_true", help="Force collection for today.")
     parser.add_argument("--skip-hover", action="store_true", help="Skip Stage 2 (docket search).")
     args = parser.parse_args()
@@ -132,6 +132,8 @@ async def main():
     print(f" Target County: {args.county.upper()}")
     print(f" Started At:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"=======================================================\n")
+
+    county_summaries = {}
 
     # 1. Hillsborough County
     if args.county in ("all", "hillsborough"):
@@ -152,6 +154,12 @@ async def main():
             print(f"  • Total Extracted Debt Value:  ${summary['total_debt_value']:,.2f}")
             print(f"=======================================================\n")
 
+            county_summaries["hillsborough"] = {
+                "count": summary["total_lps_collected"],
+                "status": "COMPLETED",
+                "report": f"hillsborough/reports/{csv_filename}"
+            }
+
             notify_downstream_machine({
                 "county": "hillsborough",
                 "target_date": target_date,
@@ -160,6 +168,7 @@ async def main():
             })
         except Exception as e:
             print(f"[-] Error in Hillsborough pipeline: {e}")
+            county_summaries["hillsborough"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
 
     # 2. Orange County (Orlando)
     if args.county in ("all", "orange"):
@@ -181,6 +190,12 @@ async def main():
             print(f"  • Orange County Report:        {orange_csv}")
             print(f"=======================================================\n")
 
+            county_summaries["orange"] = {
+                "count": orange_lps,
+                "status": "COMPLETED",
+                "report": f"orange/{target_date.replace('/', '-')}/{orange_csv}"
+            }
+
             notify_downstream_machine({
                 "county": "orange",
                 "target_date": target_date,
@@ -190,9 +205,132 @@ async def main():
             })
         except Exception as e:
             print(f"[-] Error in Orange County pipeline: {e}")
+            county_summaries["orange"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
 
-    # 3. Live AWS S3 Verification Audit
-    verify_s3_contents()
+    # 3. Duval County (Jacksonville)
+    if args.county in ("all", "duval"):
+        print(f"\n>>> [3/5] RUNNING DUVAL COUNTY PIPELINE <<<")
+        try:
+            from duval_stage1 import run_duval_stage1
+            from database import export_county_daily_csv
+            duval_lps = await run_duval_stage1(target_date)
+            duval_csv = export_county_daily_csv("duval", target_date)
+
+            print(f"\n=======================================================")
+            print(f" DUVAL COUNTY SUMMARY FOR {target_date}")
+            print(f"=======================================================")
+            print(f"  • Total Lis Pendens Downloaded: {duval_lps}")
+            print(f"  • Duval County Report:         {duval_csv}")
+            print(f"=======================================================")
+
+            county_summaries["duval"] = {
+                "count": duval_lps,
+                "status": "COMPLETED",
+                "report": f"duval/{target_date.replace('/', '-')}/{duval_csv}"
+            }
+
+            notify_downstream_machine({
+                "county": "duval",
+                "target_date": target_date,
+                "total_lps_collected": duval_lps,
+                "status": "COMPLETED",
+                "csv_report": f"duval/{target_date.replace('/', '-')}/{duval_csv}"
+            })
+        except Exception as e:
+            print(f"[-] Error in Duval pipeline: {e}")
+            county_summaries["duval"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
+
+    # 4. Broward County (Fort Lauderdale)
+    if args.county in ("all", "broward"):
+        print(f"\n>>> [4/5] RUNNING BROWARD COUNTY PIPELINE <<<")
+        try:
+            from broward_stage1 import run_broward_stage1
+            from database import export_county_daily_csv
+            broward_lps = await run_broward_stage1(target_date)
+            broward_csv = export_county_daily_csv("broward", target_date)
+
+            print(f"\n=======================================================")
+            print(f" BROWARD COUNTY SUMMARY FOR {target_date}")
+            print(f"=======================================================")
+            print(f"  • Total Lis Pendens Downloaded: {broward_lps}")
+            print(f"  • Broward County Report:       {broward_csv}")
+            print(f"=======================================================")
+
+            county_summaries["broward"] = {
+                "count": broward_lps,
+                "status": "COMPLETED",
+                "report": f"broward/{target_date.replace('/', '-')}/{broward_csv}"
+            }
+
+            notify_downstream_machine({
+                "county": "broward",
+                "target_date": target_date,
+                "total_lps_collected": broward_lps,
+                "status": "COMPLETED",
+                "csv_report": f"broward/{target_date.replace('/', '-')}/{broward_csv}"
+            })
+        except Exception as e:
+            print(f"[-] Error in Broward pipeline: {e}")
+            county_summaries["broward"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
+
+    # 5. Sarasota County
+    if args.county in ("all", "sarasota"):
+        print(f"\n>>> [5/5] RUNNING SARASOTA COUNTY PIPELINE <<<")
+        try:
+            from sarasota_stage1 import run_sarasota_stage1
+            from database import export_county_daily_csv
+            sarasota_lps = await run_sarasota_stage1(target_date)
+            sarasota_csv = export_county_daily_csv("sarasota", target_date)
+
+            print(f"\n=======================================================")
+            print(f" SARASOTA COUNTY SUMMARY FOR {target_date}")
+            print(f"=======================================================")
+            print(f"  • Total Lis Pendens Downloaded: {sarasota_lps}")
+            print(f"  • Sarasota County Report:      {sarasota_csv}")
+            print(f"=======================================================")
+
+            county_summaries["sarasota"] = {
+                "count": sarasota_lps,
+                "status": "COMPLETED",
+                "report": f"sarasota/{target_date.replace('/', '-')}/{sarasota_csv}"
+            }
+
+            notify_downstream_machine({
+                "county": "sarasota",
+                "target_date": target_date,
+                "total_lps_collected": sarasota_lps,
+                "status": "COMPLETED",
+                "csv_report": f"sarasota/{target_date.replace('/', '-')}/{sarasota_csv}"
+            })
+        except Exception as e:
+            print(f"[-] Error in Sarasota pipeline: {e}")
+            county_summaries["sarasota"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
+
+    # Live AWS S3 Verification Audit
+    s3_objects = verify_s3_contents()
+
+    step_summary_path = os.getenv("GITHUB_STEP_SUMMARY")
+    if step_summary_path:
+        try:
+            with open(step_summary_path, "a", encoding="utf-8") as f:
+                f.write(f"# 🏛️ Florida Court Lis Pendens Machine - Daily Execution Summary\n\n")
+                f.write(f"**Target Date:** `{target_date}` | **County Mode:** `{args.county.upper()}`\n\n")
+                f.write("### 📊 County Results Summary\n\n")
+                f.write("| County | Total LPs Downloaded | Status | Daily Report |\n")
+                f.write("| :--- | :---: | :---: | :--- |\n")
+                for c_name, c_data in county_summaries.items():
+                    f.write(f"| **{c_name.title()}** | {c_data.get('count', 0)} | {c_data.get('status', 'OK')} | `{c_data.get('report', '')}` |\n")
+                f.write("\n")
+                f.write(f"### 📦 Live AWS S3 Bucket Audit\n\n")
+                f.write(f"**Total Confirmed Files in S3:** `{len(s3_objects)}`\n\n")
+                f.write("| File Key | Size | Last Modified |\n")
+                f.write("| :--- | :--- | :--- |\n")
+                for obj in s3_objects:
+                    f.write(f"| `{obj['key']}` | {obj['size']:,} bytes | {obj['last_modified']} |\n")
+                f.write("\n")
+            print("[+] Successfully published execution audit to GITHUB_STEP_SUMMARY.")
+        except Exception as se:
+            print(f"[!] Step summary note: {se}")
 
 
 if __name__ == "__main__":
