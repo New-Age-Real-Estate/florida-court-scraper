@@ -21,7 +21,8 @@ DEBUG_DIR = os.getenv("DEBUG_DIR", os.path.join(BASE_DIR, "debug_screenshots/ora
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
-ORANGE_RECORDER_URL = "https://or.occompt.com/recorder/web/"
+ORANGE_RECORDER_URL = "https://selfservice.or.occompt.com/ssweb/user/disclaimer"
+ORANGE_SEARCH_URL = "https://selfservice.or.occompt.com/ssweb/search/officialrecords"
 
 
 async def run_orange_stage1(target_date: str = None) -> int:
@@ -50,36 +51,30 @@ async def run_orange_stage1(target_date: str = None) -> int:
         page = await context.new_page()
 
         try:
-            print("[*] Navigating to Orange County Comptroller portal...")
+            print("[*] Navigating to Orange County Comptroller Self-Service portal...")
             await page.goto(ORANGE_RECORDER_URL, wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(2000)
 
             # Accept disclaimer
-            accept_btn = page.locator("input[value='I Accept'], input[name='submit'][value*='Accept'], button:has-text('I Accept'), button#submitDisclaimerAccept").first
-            if await accept_btn.is_visible():
-                print("[*] Accepting portal disclaimer...")
-                try:
-                    await page.evaluate("""() => {
-                        const btn = document.querySelector('#submitDisclaimerAccept') || document.querySelector('input[value=\"I Accept\"]');
-                        if (btn) { btn.disabled = false; btn.click(); }
-                    }""")
-                except Exception:
-                    await accept_btn.click()
-                await page.wait_for_timeout(3000)
+            print("[*] Accepting portal legal disclaimer...")
+            try:
+                await page.evaluate("""() => {
+                    const btn = document.querySelector('#submitDisclaimerAccept') || document.querySelector('input[value=\"I Accept\"]');
+                    if (btn) { btn.disabled = false; btn.click(); }
+                }""")
+            except Exception:
+                pass
+            await page.wait_for_timeout(3000)
 
-            ss_btn = page.locator("button:has-text('Official Records Self-Service'), a:has-text('Official Records Self-Service')").first
-            if await ss_btn.is_visible():
-                await ss_btn.click()
-                await page.wait_for_timeout(3000)
-
-            search_link = page.locator("a:has-text('Document Search'), a:has-text('Public Search'), a[href*='search.do'], a[href*='officialrecords']").first
-            if await search_link.is_visible():
-                await search_link.click()
-                await page.wait_for_timeout(2500)
+            # Navigate to Official Records search page directly
+            print(f"[*] Navigating to Official Records search form...")
+            await page.goto(ORANGE_SEARCH_URL, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            print(f"[*] Loaded: {page.url} | Title: '{await page.title()}'")
 
             print(f"[*] Entering date range: {target_date}...")
-            date_from = page.locator("input[name*='recordedDateStart'], input[name*='dateFrom'], input#recordedDateStart, input#dateFrom, input[placeholder*='MM/DD/YYYY']").first
-            date_to = page.locator("input[name*='recordedDateEnd'], input[name*='dateTo'], input#recordedDateEnd, input#dateTo").first
+            date_from = page.locator("input[name*='recordingDate-from'], input[name*='recordedDateStart'], input[name*='dateFrom'], input#recordingDate-from, input#recordedDateStart, input#dateFrom, input[placeholder*='MM/DD/YYYY']").first
+            date_to = page.locator("input[name*='recordingDate-to'], input[name*='recordedDateEnd'], input[name*='dateTo'], input#recordingDate-to, input#recordedDateEnd, input#dateTo").first
 
             if await date_from.is_visible():
                 await date_from.fill(target_date)
@@ -87,12 +82,12 @@ async def run_orange_stage1(target_date: str = None) -> int:
                 await date_to.fill(target_date)
 
             print("[*] Filtering by Document Type: Lis Pendens (LP)...")
-            doc_type_input = page.locator("input[name*='docType'], input#docType, input[placeholder*='Doc Type']").first
+            doc_type_input = page.locator("input[name*='docType'], input#docType, input[placeholder*='Doc Type'], input[name*='documentType']").first
             if await doc_type_input.is_visible():
                 await doc_type_input.fill("LP")
                 await page.keyboard.press("Tab")
             else:
-                doc_type_select = page.locator("select[name*='docType'], select#docType").first
+                doc_type_select = page.locator("select[name*='docType'], select#docType, select[name*='documentType']").first
                 if await doc_type_select.is_visible():
                     try:
                         await doc_type_select.select_option(label="LIS PENDENS")
@@ -102,14 +97,14 @@ async def run_orange_stage1(target_date: str = None) -> int:
                         except Exception:
                             pass
 
-            print(f"[*] Submitting search on {page.url}...")
-            search_btn = page.locator("input#btnSearch, input[value='Search'], button#btnSearch, button:has-text('Search'), a:has-text('Search'), input[type='submit']").first
+            print(f"[*] Submitting search...")
+            search_btn = page.locator("button#submitSearch, input#btnSearch, input[value='Search'], button#btnSearch, button:has-text('Search'), a.ui-btn:has-text('Search'), a:has-text('Search'), input[type='submit']").first
             try:
                 await search_btn.click(timeout=8000)
             except Exception:
                 print("[*] Search button click fallback: pressing Enter...")
                 await page.keyboard.press("Enter")
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(4000)
 
             row_selector = "table.results tr:not(:first-child), table#searchResults tr:not(:first-child), table[class*='results'] tr:not(:first-child), table.report tr:not(:first-child)"
             result_rows = page.locator(row_selector)

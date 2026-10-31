@@ -50,23 +50,30 @@ async def probe_orange_comptroller():
                 # Try clicking or enabling
                 await page.evaluate("() => { const b = document.querySelector('#submitDisclaimerAccept'); if (b) { b.disabled = false; b.click(); } }")
                 await page.wait_for_timeout(3000)
-                print(f"[*] Post-click URL: {page.url} | Title: '{await page.title()}'")
+                print(f"[*] Post-disclaimer URL: {page.url} | Title: '{await page.title()}'")
 
-            # List visible forms, inputs, buttons on current page
-            inputs = await page.locator("input, button, select").all()
-            print(f"[*] Total interactive elements on page: {len(inputs)}")
-            for idx, inp in enumerate(inputs[:20]):
+            # Navigate to Official Records search form
+            search_url = "https://selfservice.or.occompt.com/ssweb/search/officialrecords"
+            print(f"[*] Navigating to search form: {search_url}...")
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            print(f"[*] Search page URL: {page.url} | Title: '{await page.title()}'")
+
+            # List visible forms, inputs, selects, and buttons on search page
+            inputs = await page.locator("input, button, select, a.ui-btn").all()
+            print(f"[*] Total elements on search page: {len(inputs)}")
+            for idx, inp in enumerate(inputs[:30]):
                 tag = await inp.evaluate("el => el.tagName")
                 inp_id = await inp.get_attribute("id") or ""
                 inp_name = await inp.get_attribute("name") or ""
                 inp_type = await inp.get_attribute("type") or ""
-                inp_val = await inp.get_attribute("value") or ""
-                text = (await inp.inner_text()).strip() if tag == "BUTTON" else ""
-                print(f"    [{idx}] <{tag} id='{inp_id}' name='{inp_name}' type='{inp_type}' value='{inp_val}'> {text}")
+                inp_placeholder = await inp.get_attribute("placeholder") or ""
+                text = (await inp.inner_text()).strip()[:40] if tag in ("BUTTON", "A") else ""
+                print(f"    [{idx}] <{tag} id='{inp_id}' name='{inp_name}' type='{inp_type}' placeholder='{inp_placeholder}'> {text}")
 
             os.makedirs("downloads/debug_orange", exist_ok=True)
-            await page.screenshot(path="downloads/debug_orange/comptroller_probe.png", full_page=True)
-            print("[+] Saved probe screenshot: downloads/debug_orange/comptroller_probe.png")
+            await page.screenshot(path="downloads/debug_orange/comptroller_search_probe.png", full_page=True)
+            print("[+] Saved probe screenshot: downloads/debug_orange/comptroller_search_probe.png")
 
         except Exception as e:
             print(f"[-] Comptroller probe error: {e}")
