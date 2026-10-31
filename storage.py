@@ -24,23 +24,43 @@ def upload_file_to_cloud(local_path: str, destination_key: str) -> Optional[str]
     if S3_BUCKET and AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
         try:
             import boto3
+            target_bucket = S3_BUCKET.replace("s3://", "").strip().strip("/")
+            
             s3 = boto3.client(
                 "s3",
                 region_name=S3_REGION,
                 aws_access_key_id=AWS_ACCESS_KEY_ID,
                 aws_secret_access_key=AWS_SECRET_ACCESS_KEY
             )
+
+            # Auto-detect / verify bucket name
+            try:
+                resp = s3.list_buckets()
+                user_buckets = [b["Name"] for b in resp.get("Buckets", [])]
+                if target_bucket not in user_buckets:
+                    if len(user_buckets) == 1:
+                        target_bucket = user_buckets[0]
+                    else:
+                        for b in user_buckets:
+                            if "court" in b or "florida" in b:
+                                target_bucket = b
+                                break
+            except Exception as lb_err:
+                logger.warning(f"Could not list buckets: {lb_err}")
+
             s3.upload_file(
                 local_path,
-                S3_BUCKET,
+                target_bucket,
                 destination_key,
                 ExtraArgs={"ContentType": "application/pdf" if local_path.endswith(".pdf") else "text/csv"}
             )
-            url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{destination_key}"
+            url = f"https://{target_bucket}.s3.{S3_REGION}.amazonaws.com/{destination_key}"
             logger.info(f"[+] Uploaded to S3: {url}")
+            print(f"    ├── Synced to S3: {url}")
             return url
         except Exception as e:
             logger.error(f"[-] S3 upload failed for {local_path}: {e}")
+            print(f"    [!] S3 upload warning: {e}")
             return None
     
     return local_path
