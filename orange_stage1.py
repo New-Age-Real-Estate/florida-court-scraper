@@ -102,6 +102,11 @@ async def run_orange_stage1(target_date: str = None) -> int:
             text_inputs = await page.locator("input[type='text'], input:not([type])").all()
             if len(text_inputs) >= 2:
                 print(f"[*] Found {len(text_inputs)} text inputs. Filling date range into first two inputs...")
+                for idx, inp in enumerate(text_inputs):
+                    iid = await inp.get_attribute("id") or ""
+                    iname = await inp.get_attribute("name") or ""
+                    iplace = await inp.get_attribute("placeholder") or ""
+                    print(f"    Input [{idx}]: id='{iid}', name='{iname}', placeholder='{iplace}'")
                 await text_inputs[0].fill(target_date)
                 await text_inputs[1].fill(target_date)
             else:
@@ -142,9 +147,10 @@ async def run_orange_stage1(target_date: str = None) -> int:
                     await search_btn.click(force=True, timeout=5000)
                 except Exception:
                     await page.keyboard.press("Enter")
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(6000)
+            print(f"[*] Post-search URL: {page.url} | Title: '{await page.title()}'")
 
-            row_selector = "table.results tr:not(:first-child), table#searchResults tr:not(:first-child), table[class*='results'] tr:not(:first-child), table.report tr:not(:first-child)"
+            row_selector = "table tbody tr, table tr:not(:first-child), div[class*='results'] tr, .ui-table tr:not(:first-child)"
             result_rows = page.locator(row_selector)
 
             try:
