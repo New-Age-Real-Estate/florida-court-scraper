@@ -89,7 +89,8 @@ async def run_stage1_ori(target_date: str = None) -> int:
         try:
             # 1. Open Hillsborough Official Records Search
             print("[*] Navigating to Hillsborough Official Records portal...")
-            await page.goto("https://publicaccess.hillsclerk.com/oripublicaccess/", wait_until="networkidle", timeout=60000)
+            await page.goto("https://publicaccess.hillsclerk.com/oripublicaccess/", wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(2000)
 
             # 2. Under Search Types, click Document Type
             print("[*] Selecting 'Document Type' search...")
