@@ -49,11 +49,19 @@ def upload_file_to_cloud(local_path: str, destination_key: str) -> Optional[str]
             except Exception as lb_err:
                 logger.warning(f"Could not list buckets: {lb_err}")
 
+            content_type = "application/pdf"
+            if local_path.endswith(".csv"):
+                content_type = "text/csv"
+            elif local_path.endswith(".png"):
+                content_type = "image/png"
+            elif local_path.endswith(".json"):
+                content_type = "application/json"
+
             s3.upload_file(
                 local_path,
                 target_bucket,
                 destination_key,
-                ExtraArgs={"ContentType": "application/pdf" if local_path.endswith(".pdf") else "text/csv"}
+                ExtraArgs={"ContentType": content_type}
             )
             url = f"https://{target_bucket}.s3.{S3_REGION}.amazonaws.com/{destination_key}"
             logger.info(f"[+] Uploaded to S3: {url}")
