@@ -304,13 +304,40 @@ async def run_stage1_ori(target_date: str = None) -> int:
                             if uploaded_url:
                                 cloud_pdf_url = uploaded_url
 
-                        # 12. Parse Page 1 for Case No.
+                        # 12. Extract Case Number (from row cells, doc panel, modal, or PDF)
                         case_no = ""
-                        if download_success and os.path.exists(pdf_path):
+                        # Method 1: Check row cells
+                        for c in cells:
+                            m = re.search(r"\b([0-9]{2}-[A-Z]{2,4}-[0-9]{4,7})\b", c, re.I)
+                            if m:
+                                case_no = m.group(1).upper()
+                                break
+
+                        # Method 2: Check doc info panel or full modal text
+                        if not case_no:
+                            try:
+                                doc_info_panel = page.locator(".doc-info, #documentInfo, div[class*='document-info'], #dataPanel").first
+                                doc_info_text = await doc_info_panel.inner_text() if await doc_info_panel.is_visible() else ""
+                                m = re.search(r"\b([0-9]{2}-[A-Z]{2,4}-[0-9]{4,7})\b", doc_info_text, re.I)
+                                if m:
+                                    case_no = m.group(1).upper()
+                            except Exception:
+                                pass
+
+                        if not case_no:
+                            try:
+                                modal_html = await page.content()
+                                m = re.search(r"\b([0-9]{2}-[A-Z]{2,4}-[0-9]{4,7})\b", modal_html, re.I)
+                                if m:
+                                    case_no = m.group(1).upper()
+                            except Exception:
+                                pass
+
+                        # Method 3: PDF digital text
+                        if not case_no and download_success and os.path.exists(pdf_path):
                             case_no = extract_case_number_from_pdf(pdf_path)
-                            print(f"    ├── Extracted Case No: '{case_no}'")
-                        else:
-                            print(f"    [!] Warning: PDF could not be saved for {instrument_number}")
+
+                        print(f"    ├── Extracted Case No: '{case_no}'")
 
                         # Store in SQLite database
                         insert_or_update_lp(
