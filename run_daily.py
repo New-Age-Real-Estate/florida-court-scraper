@@ -193,12 +193,19 @@ async def run_orange_flow(target_date: str, skip_hover: bool, county_summaries: 
         county_summaries["orange"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
 
 
-async def run_duval_flow(target_date: str, county_summaries: dict):
+async def run_duval_flow(target_date: str, skip_hover: bool, county_summaries: dict):
     print(f"\n>>> [STARTING] DUVAL COUNTY PIPELINE <<<")
     try:
         from duval_stage1 import run_duval_stage1
         from database import export_county_daily_csv
         duval_lps = await run_duval_stage1(target_date)
+        if not skip_hover:
+            try:
+                from duval_stage2 import run_duval_stage2
+                await run_duval_stage2()
+            except Exception as s2_err:
+                print(f"[!] Duval Stage 2 debt extraction note: {s2_err}")
+
         duval_csv = export_county_daily_csv("duval", target_date)
 
         print(f"\n=======================================================")
@@ -226,12 +233,19 @@ async def run_duval_flow(target_date: str, county_summaries: dict):
         county_summaries["duval"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
 
 
-async def run_broward_flow(target_date: str, county_summaries: dict):
+async def run_broward_flow(target_date: str, skip_hover: bool, county_summaries: dict):
     print(f"\n>>> [STARTING] BROWARD COUNTY PIPELINE <<<")
     try:
         from broward_stage1 import run_broward_stage1
         from database import export_county_daily_csv
         broward_lps = await run_broward_stage1(target_date)
+        if not skip_hover:
+            try:
+                from broward_stage2 import run_broward_stage2
+                await run_broward_stage2()
+            except Exception as s2_err:
+                print(f"[!] Broward Stage 2 debt extraction note: {s2_err}")
+
         broward_csv = export_county_daily_csv("broward", target_date)
 
         print(f"\n=======================================================")
@@ -259,12 +273,19 @@ async def run_broward_flow(target_date: str, county_summaries: dict):
         county_summaries["broward"] = {"count": 0, "status": f"ERROR: {e}", "report": ""}
 
 
-async def run_sarasota_flow(target_date: str, county_summaries: dict):
+async def run_sarasota_flow(target_date: str, skip_hover: bool, county_summaries: dict):
     print(f"\n>>> [STARTING] SARASOTA COUNTY PIPELINE <<<")
     try:
         from sarasota_stage1 import run_sarasota_stage1
         from database import export_county_daily_csv
         sarasota_lps = await run_sarasota_stage1(target_date)
+        if not skip_hover:
+            try:
+                from sarasota_stage2 import run_sarasota_stage2
+                await run_sarasota_stage2()
+            except Exception as s2_err:
+                print(f"[!] Sarasota Stage 2 debt extraction note: {s2_err}")
+
         sarasota_csv = export_county_daily_csv("sarasota", target_date)
 
         print(f"\n=======================================================")
@@ -360,11 +381,11 @@ async def main():
     if args.county in ("all", "orange"):
         tasks.append(run_orange_flow(target_date, args.skip_hover, county_summaries))
     if args.county in ("all", "duval"):
-        tasks.append(run_duval_flow(target_date, county_summaries))
+        tasks.append(run_duval_flow(target_date, args.skip_hover, county_summaries))
     if args.county in ("all", "broward"):
-        tasks.append(run_broward_flow(target_date, county_summaries))
+        tasks.append(run_broward_flow(target_date, args.skip_hover, county_summaries))
     if args.county in ("all", "sarasota"):
-        tasks.append(run_sarasota_flow(target_date, county_summaries))
+        tasks.append(run_sarasota_flow(target_date, args.skip_hover, county_summaries))
     if args.county in ("all", "manatee"):
         tasks.append(run_manatee_flow(target_date, args.skip_hover, county_summaries))
 
