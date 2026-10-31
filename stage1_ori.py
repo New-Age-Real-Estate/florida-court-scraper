@@ -209,23 +209,11 @@ async def run_stage1_ori(target_date: str = None) -> int:
 
                         print(f"\n--- [{total_processed + 1}] Processing: {party_name} ---")
 
-                        # Dismiss any leftover modal from previous actions
+                        # Click party link to open document viewer
                         try:
-                            await page.keyboard.press("Escape")
-                            await page.evaluate("""() => {
-                                const closeBtns = document.querySelectorAll('button.close, .ui-dialog-titlebar-close, [aria-label=\"Close\"], .modal-header .close, button:has-text(\"Close\")');
-                                closeBtns.forEach(b => { if (b.offsetParent !== null) b.click(); });
-                            }""")
-                            await page.wait_for_timeout(300)
+                            await party_link.click(timeout=10000)
                         except Exception:
-                            pass
-
-                        # Click party link using direct JavaScript evaluation to bypass pointer intercepts
-                        try:
-                            await party_link.scroll_into_view_if_needed()
-                            await party_link.evaluate("el => el.click()")
-                        except Exception:
-                            await party_link.click(force=True)
+                            await party_link.click(force=True, timeout=10000)
                         await page.wait_for_timeout(3000)
 
                         if not instrument_number:
@@ -336,10 +324,11 @@ async def run_stage1_ori(target_date: str = None) -> int:
 
                         # 13. Dismiss/Close the document popup
                         try:
-                            await page.keyboard.press("Escape")
-                            close_btn = page.locator("button.close, .ui-dialog-titlebar-close, [aria-label='Close'], button:has-text('✕')").first
+                            close_btn = page.locator(".modal.show button.close, .modal-header button.close, [data-dismiss='modal'], button.close, .ui-dialog-titlebar-close, [aria-label='Close'], button:has-text('✕')").first
                             if await close_btn.is_visible():
                                 await close_btn.click()
+                            else:
+                                await page.keyboard.press("Escape")
                         except Exception:
                             pass
                         await page.wait_for_timeout(1000)
@@ -347,11 +336,19 @@ async def run_stage1_ori(target_date: str = None) -> int:
                     except Exception as row_err:
                         print(f"    [!] Error on row {idx + 1}: {row_err}. Dismissing modal and proceeding...")
                         try:
-                            await page.keyboard.press("Escape")
-                            await page.wait_for_timeout(500)
+                            close_btn = page.locator(".modal.show button.close, .modal-header button.close, [data-dismiss='modal'], button.close, .ui-dialog-titlebar-close, [aria-label='Close'], button:has-text('✕')").first
+                            if await close_btn.is_visible():
+                                await close_btn.click()
+                            else:
+                                await page.keyboard.press("Escape")
                         except Exception:
                             pass
+                        await page.wait_for_timeout(500)
                         continue
+
+                if page.is_closed():
+                    print("[!] Browser page was closed. Finishing stage 1.")
+                    break
 
                 # Pagination: Check for Next Page
                 next_btn = page.locator("a:has-text('Next'), a[title*='next' i], .k-pager-next:not(.k-state-disabled)").first
