@@ -99,54 +99,44 @@ async def run_orange_stage1(target_date: str = None) -> int:
             print(f"[*] Loaded: {page.url} | Title: '{await page.title()}'")
 
             print(f"[*] Entering date range: {target_date}...")
-            text_inputs = await page.locator("input[type='text'], input:not([type])").all()
-            if len(text_inputs) >= 2:
-                print(f"[*] Found {len(text_inputs)} text inputs. Filling date range into first two inputs...")
-                for idx, inp in enumerate(text_inputs):
-                    iid = await inp.get_attribute("id") or ""
-                    iname = await inp.get_attribute("name") or ""
-                    iplace = await inp.get_attribute("placeholder") or ""
-                    print(f"    Input [{idx}]: id='{iid}', name='{iname}', placeholder='{iplace}'")
-                await text_inputs[0].fill(target_date)
-                await text_inputs[1].fill(target_date)
-            else:
-                date_from = page.locator("input[name*='recordingDate-from'], input[name*='recordedDateStart'], input[name*='dateFrom'], input#recordingDate-from, input#recordedDateStart, input#dateFrom, input[placeholder*='MM/DD/YYYY']").first
-                date_to = page.locator("input[name*='recordingDate-to'], input[name*='recordedDateEnd'], input[name*='dateTo'], input#recordingDate-to, input#recordedDateEnd, input#dateTo").first
-                if await date_from.is_visible():
-                    await date_from.fill(target_date)
-                if await date_to.is_visible():
-                    await date_to.fill(target_date)
+            start_date_el = page.locator("#field_RecordingDateID_DOT_StartDate, input[name*='StartDate']").first
+            end_date_el = page.locator("#field_RecordingDateID_DOT_EndDate, input[name*='EndDate']").first
+
+            if await start_date_el.is_visible():
+                await start_date_el.click()
+                await start_date_el.fill(target_date)
+                await start_date_el.press("Tab")
+
+            if await end_date_el.is_visible():
+                await end_date_el.click()
+                await end_date_el.fill(target_date)
+                await end_date_el.press("Tab")
+
+            # Fire change events on date inputs
+            await page.evaluate("""() => {
+                const s = document.querySelector('#field_RecordingDateID_DOT_StartDate');
+                const e = document.querySelector('#field_RecordingDateID_DOT_EndDate');
+                if (s) { s.dispatchEvent(new Event('input', {bubbles: true})); s.dispatchEvent(new Event('change', {bubbles: true})); }
+                if (e) { e.dispatchEvent(new Event('input', {bubbles: true})); e.dispatchEvent(new Event('change', {bubbles: true})); }
+            }""")
 
             print("[*] Filtering by Document Type: Lis Pendens (LP)...")
-            doc_type_input = page.locator("input[name*='docType'], input#docType, input[placeholder*='Doc Type'], input[name*='documentType']").first
-            if await doc_type_input.is_visible():
-                await doc_type_input.fill("LP")
-                await page.keyboard.press("Tab")
-            else:
-                doc_type_select = page.locator("select[name*='docType'], select#docType, select[name*='documentType']").first
-                if await doc_type_select.is_visible():
-                    try:
-                        await doc_type_select.select_option(label="LIS PENDENS")
-                    except Exception:
-                        try:
-                            await doc_type_select.select_option(value="LP")
-                        except Exception:
-                            pass
+            doc_type_el = page.locator("#field_selfservice_documentTypes, input[name*='documentTypes']").first
+            if await doc_type_el.is_visible():
+                await doc_type_el.click()
+                await doc_type_el.fill("LP")
+                await doc_type_el.press("Tab")
 
             print(f"[*] Submitting search...")
-            try:
+            search_btn = page.locator("button:text-is('Search')").first
+            if await search_btn.is_visible():
+                await search_btn.click(force=True)
+            else:
                 await page.evaluate("""() => {
                     const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Search') ||
-                                document.querySelector('input[type=\"submit\"][value=\"Search\"], button#submitSearch, button[type=\"submit\"]');
+                                document.querySelector('button[type=\"submit\"], input[value=\"Search\"]');
                     if (btn) btn.click();
                 }""")
-            except Exception as e:
-                print(f"[*] DOM search button click note: {e}")
-                search_btn = page.locator("button:text-is('Search'), button[type='submit']").first
-                try:
-                    await search_btn.click(force=True, timeout=5000)
-                except Exception:
-                    await page.keyboard.press("Enter")
             await page.wait_for_timeout(6000)
             print(f"[*] Post-search URL: {page.url} | Title: '{await page.title()}'")
 
