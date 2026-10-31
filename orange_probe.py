@@ -119,12 +119,12 @@ async def probe_orange_comptroller():
             await page.wait_for_timeout(5000)
             print(f"[*] Post-search URL: {page.url} | Title: '{await page.title()}'")
 
-                # Check for results
-                rows = await page.locator("table tr:not(:first-child)").all()
-                print(f"[*] Found {len(rows)} table rows in search results!")
-                for idx, r in enumerate(rows[:5]):
-                    row_txt = (await r.inner_text()).replace('\n', ' | ')
-                    print(f"    [Row {idx+1}] {row_txt[:120]}")
+            # Check for results
+            rows = await page.locator("table tr:not(:first-child)").all()
+            print(f"[*] Found {len(rows)} table rows in search results!")
+            for idx, r in enumerate(rows[:5]):
+                row_txt = (await r.inner_text()).replace('\n', ' | ')
+                print(f"    [Row {idx+1}] {row_txt[:120]}")
 
             os.makedirs("downloads/debug_orange", exist_ok=True)
             await page.screenshot(path="downloads/debug_orange/comptroller_search_probe.png", full_page=True)
