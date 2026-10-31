@@ -181,6 +181,13 @@ async def main():
                 print(f"[!] Probe warning: {pe}")
 
             orange_lps = await run_orange_stage1(target_date)
+            if not args.skip_hover:
+                try:
+                    from orange_stage2_myeclerk import run_orange_stage2_myeclerk
+                    await run_orange_stage2_myeclerk()
+                except Exception as s2_err:
+                    print(f"[!] Orange Stage 2 debt extraction note: {s2_err}")
+
             orange_csv = export_orange_daily_csv(target_date)
 
             print(f"\n=======================================================")
