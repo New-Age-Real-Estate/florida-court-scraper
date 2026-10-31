@@ -83,3 +83,61 @@ def notify_downstream_machine(payload: dict):
             logger.info(f"[+] Notified machine webhook: HTTP {resp.status}")
     except Exception as e:
         logger.error(f"[-] Webhook notification failed: {e}")
+
+
+def verify_s3_contents() -> list:
+    """Live audit of S3 bucket to verify all files currently in AWS."""
+    if not (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY):
+        print("[!] AWS credentials not available in environment.")
+        return []
+
+    try:
+        import boto3
+        target_bucket = S3_BUCKET.replace("s3://", "").strip().strip("/") if S3_BUCKET else "florida-court-records-machine"
+        s3 = boto3.client(
+            "s3",
+            region_name=S3_REGION,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+        )
+
+        try:
+            resp = s3.list_buckets()
+            user_buckets = [b["Name"] for b in resp.get("Buckets", [])]
+            if target_bucket not in user_buckets:
+                for b in user_buckets:
+                    if "court" in b or "florida" in b:
+                        target_bucket = b
+                        break
+        except Exception:
+            pass
+
+        print(f"\n{'='*60}")
+        print(f"[*] LIVE AWS S3 VERIFICATION AUDIT")
+        print(f"[*] Target Bucket: {target_bucket}")
+        print(f"{'='*60}")
+
+        paginator = s3.get_paginator("list_objects_v2")
+        all_objects = []
+        for p in paginator.paginate(Bucket=target_bucket):
+            for obj in p.get("Contents", []):
+                item = {
+                    "key": obj["Key"],
+                    "size": obj["Size"],
+                    "last_modified": str(obj["LastModified"])
+                }
+                all_objects.append(item)
+                print(f"  [AWS S3 CONFIRMED] {obj['Key']} ({obj['Size']:,} bytes, {obj['LastModified']})")
+
+        print(f"[*] Total confirmed files in S3: {len(all_objects)}")
+        print(f"{'='*60}\n")
+
+        audit_path = os.path.join(BASE_DIR, "s3_verification_audit.json")
+        with open(audit_path, "w") as f:
+            json.dump({"bucket": target_bucket, "total": len(all_objects), "files": all_objects}, f, indent=2)
+
+        return all_objects
+    except Exception as e:
+        print(f"[-] AWS S3 audit exception: {e}")
+        return []
+
