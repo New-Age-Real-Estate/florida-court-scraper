@@ -22,10 +22,15 @@ def init_db():
                 hover_status TEXT DEFAULT 'PENDING',
                 docket_pdf_path TEXT,
                 error_log TEXT,
+                county TEXT DEFAULT 'hillsborough',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        try:
+            cur.execute("ALTER TABLE lis_pendens ADD COLUMN county TEXT DEFAULT 'hillsborough'")
+        except Exception:
+            pass
         conn.commit()
 
 def is_instrument_recorded(instrument_number: str) -> bool:
@@ -46,20 +51,22 @@ def insert_or_update_lp(
     recording_date: str,
     party_name: str,
     case_number: str,
-    pdf_path: str
+    pdf_path: str,
+    county: str = "hillsborough"
 ):
     """Inserts or updates an extracted Lis Pendens record."""
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO lis_pendens (
-                instrument_number, recording_date, party_name, case_number, pdf_path, updated_at
-            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                instrument_number, recording_date, party_name, case_number, pdf_path, county, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(instrument_number) DO UPDATE SET
                 case_number = excluded.case_number,
                 pdf_path = excluded.pdf_path,
+                county = excluded.county,
                 updated_at = CURRENT_TIMESTAMP
-        """, (instrument_number, recording_date, party_name, case_number, pdf_path))
+        """, (instrument_number, recording_date, party_name, case_number, pdf_path, county))
         conn.commit()
 
 def get_pending_hover_cases() -> List[Dict[str, Any]]:
