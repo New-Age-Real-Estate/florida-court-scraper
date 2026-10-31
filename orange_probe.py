@@ -98,14 +98,11 @@ async def probe_orange_comptroller():
 
             # Test entering date and document type
             target_date = "10/22/2026"
-            date_from = page.locator("input[name*='recordingDate-from'], input[name*='recordedDateStart'], input[name*='dateFrom'], input#recordingDate-from, input#recordedDateStart, input#dateFrom, input[placeholder*='MM/DD/YYYY']").first
-            date_to = page.locator("input[name*='recordingDate-to'], input[name*='recordedDateEnd'], input[name*='dateTo'], input#recordingDate-to, input#recordedDateEnd, input#dateTo").first
-
-            if await date_from.is_visible():
-                print(f"[*] Filling recording dates with {target_date}...")
-                await date_from.fill(target_date)
-            if await date_to.is_visible():
-                await date_to.fill(target_date)
+            text_inputs = await page.locator("input[type='text'], input:not([type])").all()
+            if len(text_inputs) >= 2:
+                print(f"[*] Filling date range with {target_date} into first two inputs...")
+                await text_inputs[0].fill(target_date)
+                await text_inputs[1].fill(target_date)
 
             doc_type_input = page.locator("input[name*='docType'], input#docType, input[placeholder*='Doc Type'], input[name*='documentType']").first
             if await doc_type_input.is_visible():
@@ -113,12 +110,14 @@ async def probe_orange_comptroller():
                 await doc_type_input.fill("LP")
                 await page.keyboard.press("Tab")
 
-            search_btn = page.locator("button#submitSearch, input#btnSearch, input[value='Search'], button#btnSearch, button:has-text('Search'), a.ui-btn:has-text('Search'), input[type='submit']").first
-            if await search_btn.is_visible():
-                print("[*] Submitting search form...")
-                await search_btn.click()
-                await page.wait_for_timeout(5000)
-                print(f"[*] Post-search URL: {page.url} | Title: '{await page.title()}'")
+            print("[*] Submitting search form via DOM...")
+            await page.evaluate("""() => {
+                const b = Array.from(document.querySelectorAll('button')).find(el => el.textContent.trim() === 'Search') ||
+                          document.querySelector('button[type=\"submit\"], input[value=\"Search\"]');
+                if (b) b.click();
+            }""")
+            await page.wait_for_timeout(5000)
+            print(f"[*] Post-search URL: {page.url} | Title: '{await page.title()}'")
 
                 # Check for results
                 rows = await page.locator("table tr:not(:first-child)").all()
