@@ -48,7 +48,7 @@ def calculate_target_date(manual_date: str = None, force_today: bool = False) ->
     return target.strftime("%m/%d/%Y")
 
 
-def export_daily_csv(target_date: str):
+def export_daily_csv(target_date: str) -> str:
     """Exports all records for the given date to a CSV file."""
     clean_date = target_date.replace("/", "-")
     csv_filename = f"hillsborough_report_{clean_date}.csv"
@@ -75,7 +75,7 @@ def export_daily_csv(target_date: str):
 
     if not rows:
         print(f"[*] No records in database for {target_date} to export.")
-        return
+        return csv_filename
 
     fieldnames = [
         "instrument_number",
@@ -99,6 +99,8 @@ def export_daily_csv(target_date: str):
     cloud_url = upload_file_to_cloud(csv_path, f"hillsborough/reports/{csv_filename}")
     if cloud_url and cloud_url != csv_path:
         print(f"[+] Synced report to S3: {cloud_url}")
+
+    return csv_filename
 
 
 async def main():
@@ -127,7 +129,7 @@ async def main():
         await run_stage2_hover()
 
     # Export & Summary
-    export_daily_csv(target_date)
+    csv_filename = export_daily_csv(target_date)
     summary = get_daily_summary(target_date)
 
     print(f"\n=======================================================")

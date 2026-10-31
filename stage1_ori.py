@@ -12,7 +12,7 @@ from storage import upload_file_to_cloud
 load_dotenv()
 
 BRIGHT_DATA_WS_ENDPOINT = os.getenv("BRIGHT_DATA_WS_ENDPOINT")
-USE_LOCAL_BROWSER = os.getenv("USE_LOCAL_BROWSER", "true").lower() in ("true", "1", "yes")
+USE_LOCAL_BROWSER = os.getenv("USE_LOCAL_BROWSER", "false" if BRIGHT_DATA_WS_ENDPOINT else "true").lower() in ("true", "1", "yes")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", os.path.join(BASE_DIR, "downloads/lis_pendens"))
 DEBUG_DIR = os.getenv("DEBUG_DIR", os.path.join(BASE_DIR, "debug_screenshots"))
@@ -139,22 +139,32 @@ async def run_stage1_ori(target_date: str = None) -> int:
             await search_button.click()
             await page.wait_for_timeout(1500)
 
-            # If results didn't begin loading, click search again
-            results_table = page.locator("table tbody tr, div.k-grid-content tr").first
-            if not await results_table.is_visible():
-                print("[*] Clicking Search again (clearing calendar popup)...")
-                await search_button.click()
-
-            print("[*] Waiting for search results table...")
-            await results_table.wait_for(state="visible", timeout=30000)
+            # 6. Click Search
+            print("[*] Submitting search...")
+            search_button = page.locator(".search-action-buttons button:has-text('Search'), button:has-text('Search')").first
+            await search_button.click()
             await page.wait_for_timeout(2000)
 
-            # Check if zero records
-            body_text = await page.content()
-            if "No records found" in body_text or "No items to display" in body_text:
-                print(f"[!] No Lis Pendens records filed on {target_date}.")
-                await browser.close()
-                return 0
+            # Wait for real result rows (ignore the hidden template row: .jsgrid-nodata-row)
+            print("[*] Waiting for search results table...")
+            row_selector = "tr.jsgrid-row, tr.jsgrid-alt-row, table tbody tr:not(.jsgrid-nodata-row)"
+            results_rows = page.locator(row_selector)
+
+            try:
+                await results_rows.first.wait_for(state="visible", timeout=25000)
+            except Exception:
+                # Check if truly no records filed on this date
+                body_text = await page.content()
+                if "No records found" in body_text or "No items to display" in body_text:
+                    print(f"[!] No Lis Pendens records filed on {target_date}.")
+                    await browser.close()
+                    return 0
+                # Sometimes the first click closed a datepicker overlay; click Search once more
+                print("[*] Retrying search button click...")
+                await search_button.click()
+                await results_rows.first.wait_for(state="visible", timeout=25000)
+
+            await page.wait_for_timeout(2000)
 
             # Optimize: Select 100 items per page to minimize pagination
             try:
@@ -172,7 +182,7 @@ async def run_stage1_ori(target_date: str = None) -> int:
 
             while has_next_page:
                 print(f"\n[*] Scanning page {page_index}...")
-                rows = await page.locator("table tbody tr, div.k-grid-content tr").all()
+                rows = await page.locator("tr.jsgrid-row, tr.jsgrid-alt-row, table tbody tr:not(.jsgrid-nodata-row)").all()
                 print(f"[*] Found {len(rows)} rows on current page.")
 
                 for idx, row in enumerate(rows):
