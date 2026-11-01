@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.DS_Store
+downloads/
+debug_screenshots/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+s3_verification_audit.json

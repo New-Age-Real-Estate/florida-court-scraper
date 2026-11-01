@@ -193,5 +193,161 @@ def export_county_daily_csv(county: str, target_date: str) -> str:
     upload_file_to_cloud(csv_path, s3_key_reports)
     print(f"[*] Exported {len(rows)} {county_clean.title()} records to CSV: {csv_filename} and uploaded to S3.")
 
+    # Generate canonical NAGE S3 Manifest (LP/<County>/<Date>/ and COURT-DEBT-RECORDS)
+    export_county_nage_s3_manifest(county, target_date, rows)
+
     return csv_filename
+
+
+def export_county_nage_s3_manifest(county: str, target_date: str, rows: Optional[List[Dict[str, Any]]] = None):
+    """
+    Exports daily Lis Pendens & Court Docket records directly to AWS S3
+    matching the canonical NAGE cloud lake layout:
+      - s3://<bucket>/LP/<County>/<Date>/<Notice>.pdf
+      - s3://<bucket>/LP/<County>/<Date>/<Companion>.pdf
+      - s3://<bucket>/LP/<County>/<Date>/index.csv
+      - s3://<bucket>/COURT-DEBT-RECORDS/<county>/<CaseNumber>/court-source.pdf
+      - s3://<bucket>/COURT-DEBT-RECORDS/<county>/<CaseNumber>/case.receipt.json
+    """
+    import csv
+    import datetime
+    import hashlib
+    import json
+    import re
+    from storage import upload_file_to_cloud
+
+    county_clean = county.lower().strip()
+    county_title = county_clean.title()
+    county_codes = {
+        "hillsborough": ("29", "hover.hillsclerk.com"),
+        "orange": ("48", "myeclerk.myorangeclerk.com"),
+        "manatee": ("41", "records.manateeclerk.com"),
+        "sarasota": ("58", "clerknet.sarasotaclerk.com"),
+        "duval": ("16", "core.duvalclerk.com"),
+        "broward": ("06", "eclerk.browardclerk.org")
+    }
+    code, domain = county_codes.get(county_clean, ("", "court.fl.gov"))
+
+    # Convert MM/DD/YYYY to YYYY-MM-DD
+    iso_date = target_date
+    if "/" in target_date:
+        parts = target_date.split("/")
+        if len(parts) == 3:
+            iso_date = f"{parts[2]}-{int(parts[0]):02d}-{int(parts[1]):02d}"
+
+    if rows is None:
+        with get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT instrument_number, recording_date, party_name, case_number, pdf_path, docket_pdf_path, debt_amount
+                FROM lis_pendens
+                WHERE recording_date = ? AND (county = ? OR (county IS NULL AND ? = 'hillsborough') OR pdf_path LIKE '%' || ? || '%')
+                ORDER BY created_at DESC
+            """, (target_date, county_clean, county_clean, county_clean))
+            rows = [dict(r) for r in cur.fetchall()]
+
+    base_dir = os.path.dirname(__file__)
+    index_filename = f"index_{county_clean}_{iso_date}.csv"
+    index_local_path = os.path.join(base_dir, index_filename)
+
+    index_rows = []
+
+    for r in rows:
+        inst = r.get("instrument_number", "").strip()
+        raw_case = r.get("case_number", "").strip()
+        party = r.get("party_name", "UNKNOWN").strip()
+        pdf_path = r.get("pdf_path", "")
+        docket_pdf_path = r.get("docket_pdf_path", "")
+
+        # Normalize UCN
+        raw_clean = raw_case.replace(" ", "").upper()
+        m = re.search(r'(?:(\d{2})[-_]?)?((?:19|20)?\d{2})[-_]?([A-Z]{2})[-_]?0*(\d{4,8})', raw_clean)
+        if m:
+            c_prefix, yr, kind, num = m.groups()
+            prefix = c_prefix or code
+            if len(yr) == 2: yr = "20" + yr
+            ucn = f"{prefix}-{yr}-{kind}-{int(num):06d}"
+        else:
+            ucn = raw_clean
+
+        safe_party = re.sub(r'[^A-Za-z0-9 ]', '', party).strip()[:40]
+
+        if ucn:
+            lp_s3_name = f"{ucn} - LIS PENDENS - {safe_party} [{inst}].pdf"
+        else:
+            lp_s3_name = f"{inst} - LIS PENDENS - {safe_party}.pdf"
+
+        # 1. Upload LP Notice directly to S3 canonical path
+        s3_lp_key = f"LP/{county_title}/{iso_date}/{lp_s3_name}"
+        if pdf_path and os.path.exists(pdf_path):
+            upload_file_to_cloud(pdf_path, s3_lp_key)
+
+        # 2. Upload Court Debt Companion & Case Receipt directly to S3
+        if docket_pdf_path and os.path.exists(docket_pdf_path):
+            if ucn:
+                dock_s3_name = f"{ucn} - COURT DEBT - Complaint.pdf"
+            else:
+                dock_s3_name = f"{inst} - COURT DEBT - Complaint.pdf"
+
+            s3_dock_key = f"LP/{county_title}/{iso_date}/{dock_s3_name}"
+            upload_file_to_cloud(docket_pdf_path, s3_dock_key)
+
+            case_slug = ucn.replace("-", "") if ucn else f"INST{inst}"
+            s3_court_pdf_key = f"COURT-DEBT-RECORDS/{county_clean}/{case_slug}/court-source.pdf"
+            s3_receipt_key = f"COURT-DEBT-RECORDS/{county_clean}/{case_slug}/case.receipt.json"
+
+            upload_file_to_cloud(docket_pdf_path, s3_court_pdf_key)
+
+            receipt_data = {
+                "county": county_clean,
+                "court_case_number": case_slug,
+                "lp_instrument_numbers": [str(inst)],
+                "source_url": f"https://{domain}/",
+                "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "checked_by": "Automated Scraper (Stage 2)",
+                "document_title": "FORECLOSURE COMPLAINT / VALUE CLAIM FORM",
+                "filed_date": iso_date,
+                "case_binding": "ATTENDED_COURT_CASE",
+                "status": "HELD",
+                "pdf": "court-source.pdf"
+            }
+            tmp_receipt_path = os.path.join(base_dir, f"receipt_{case_slug}.json")
+            with open(tmp_receipt_path, "w") as f_rec:
+                json.dump(receipt_data, f_rec, indent=2)
+            upload_file_to_cloud(tmp_receipt_path, s3_receipt_key)
+            try:
+                os.remove(tmp_receipt_path)
+            except OSError:
+                pass
+
+        index_rows.append({
+            "instrument": inst,
+            "recorded": r.get("recording_date", ""),
+            "uuid": hashlib.sha256(inst.encode()).hexdigest().upper(),
+            "pages": 1,
+            "plaintiff": "",
+            "defendants": party,
+            "legal": "",
+            "case_number": ucn,
+            "pdf": s3_lp_key,
+            "pdf_status": "NEW"
+        })
+
+    # Write canonical index.csv and upload to S3
+    if index_rows:
+        fieldnames = ["instrument", "recorded", "uuid", "pages", "plaintiff", "defendants", "legal", "case_number", "pdf", "pdf_status"]
+        with open(index_local_path, "w", newline="", encoding="utf-8") as f_idx:
+            writer = csv.DictWriter(f_idx, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(index_rows)
+
+        s3_index_key = f"LP/{county_title}/{iso_date}/index.csv"
+        upload_file_to_cloud(index_local_path, s3_index_key)
+        try:
+            os.remove(index_local_path)
+        except OSError:
+            pass
+        print(f"[+] Synced canonical NAGE S3 index: s3://.../{s3_index_key}")
+
 
