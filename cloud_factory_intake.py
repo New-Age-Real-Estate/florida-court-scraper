@@ -517,9 +517,26 @@ def run_intake_for_database(db_path: Path, county_slug: str, intake: CloudFactor
 
     for row in rows:
         inst = row["instrument_number"]
-        pdf_path = Path(row["pdf_path"])
+        raw_path = row["pdf_path"] or ""
+        pdf_path = Path(raw_path)
+
         if not pdf_path.exists():
-            continue
+            # Robust cloud runner path resolution
+            candidates = [
+                Path("downloads/lis_pendens") / pdf_path.name,
+                Path("downloads") / pdf_path.name,
+                Path(f"downloads/lis_pendens/Hillsborough_LP_10-22-2026_{inst}.pdf"),
+                Path.cwd() / "downloads" / "lis_pendens" / pdf_path.name,
+            ]
+            found = False
+            for cand in candidates:
+                if cand.exists():
+                    pdf_path = cand
+                    found = True
+                    break
+            if not found:
+                logger.warning(f"[-] Could not find PDF for instrument {inst} (raw: {raw_path})")
+                continue
 
         facts = GOLDEN_FACTS.get(inst, {
             "case": normalize_ucn(county_slug, row["case_number"]),
