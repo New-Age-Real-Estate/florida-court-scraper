@@ -10,3 +10,6 @@ debug_screenshots/
 *.db-wal
 *.db-shm
 s3_verification_audit.json
+smartskip_session.json
+*.csv
+
