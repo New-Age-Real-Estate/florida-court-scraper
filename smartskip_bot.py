@@ -193,8 +193,13 @@ class SmartSkipBot:
         print("[*] Navigating to Bulk Skip Tracing section...", flush=True)
         current_url = self.page.url
 
+        if "/bulk-skip" in self.page.url:
+            print(f"[+] Already on Bulk Skip Tracing page: {self.page.url}", flush=True)
+            return True
+
         # Direct known routes
         candidate_urls = [
+            f"{SMARTSKIP_APP_BASE}/bulk-skip",
             f"{SMARTSKIP_APP_BASE}/bulk-skip-tracing",
             f"{SMARTSKIP_APP_BASE}/skip-tracing/bulk",
             f"{SMARTSKIP_APP_BASE}/skip-tracing",
