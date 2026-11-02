@@ -22,7 +22,7 @@ import sys
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import certifi
@@ -719,6 +719,101 @@ def process_court_filing(
         "sha256": sha,
         "case_number": case_number,
         "court_debt_record_id": court_record.get("id") if isinstance(court_record, dict) else None,
+    }
+
+
+def admit_county_filings(
+    county_slug: str,
+    target_date: Optional[str] = None,
+    intake: Optional[VerifiedCloudIntake] = None,
+    db_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Admit all collected filings for a county from the SQLite database into Supabase."""
+    import sqlite3
+
+    if intake is None:
+        intake = VerifiedCloudIntake()
+    if not intake.is_configured():
+        logger.warning("[!] Supabase not configured; skipping automatic cloud intake")
+        return {"status": "SKIPPED", "reason": "SUPABASE_NOT_CONFIGURED"}
+
+    if db_path is None:
+        db_path = Path(__file__).parent / "hillsborough_records.db"
+    if not db_path.exists():
+        return {"status": "SKIPPED", "reason": f"DB not found: {db_path}"}
+
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    query = "SELECT * FROM lis_pendens WHERE pdf_path IS NOT NULL AND pdf_path != ''"
+    params = []
+    if target_date:
+        query += " AND recording_date = ?"
+        params.append(target_date)
+
+    cur.execute(query, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    county_rows = []
+    for r in rows:
+        c = (r.get("county") or "").lower()
+        pdf = r.get("pdf_path") or ""
+        inst = r.get("instrument_number") or ""
+        if c == county_slug or f"/{county_slug}/" in pdf or inst.startswith(f"{county_slug.upper()}_"):
+            county_rows.append(r)
+
+    admitted = 0
+    already_enqueued = 0
+    errors = 0
+    results = []
+
+    for r in county_rows:
+        pdf_p = Path(r["pdf_path"])
+        if not pdf_p.exists():
+            continue
+        docket_p = Path(r["docket_pdf_path"]) if r.get("docket_pdf_path") else None
+        valid_docket = docket_p if (docket_p and docket_p.exists()) else None
+
+        rec_date = r.get("recording_date", "")
+        filing_date_iso = None
+        if "/" in rec_date:
+            parts = rec_date.split("/")
+            if len(parts) == 3:
+                filing_date_iso = f"{parts[2]}-{int(parts[0]):02d}-{int(parts[1]):02d}"
+        elif "-" in rec_date:
+            filing_date_iso = rec_date.split(" ")[0]
+
+        try:
+            res = process_court_filing(
+                local_pdf=pdf_p,
+                county_slug=county_slug,
+                raw_case_number=r.get("case_number"),
+                instrument_number=r.get("instrument_number"),
+                intake=intake,
+                filing_date=filing_date_iso,
+                court_claim_pdf=valid_docket,
+                first_defendant=r.get("party_name"),
+            )
+            if res.get("status") == "ADMITTED":
+                admitted += 1
+            elif res.get("status") == "ALREADY_ENQUEUED":
+                already_enqueued += 1
+            results.append(res)
+        except Exception as e:
+            logger.error(f"[-] Error admitting {r.get('instrument_number')} for {county_slug}: {e}")
+            errors += 1
+
+    logger.info(
+        f"[+] County intake complete for {county_slug}: admitted={admitted}, already_enqueued={already_enqueued}, errors={errors}"
+    )
+    return {
+        "county": county_slug,
+        "admitted": admitted,
+        "already_enqueued": already_enqueued,
+        "errors": errors,
+        "total": len(county_rows),
     }
 
 

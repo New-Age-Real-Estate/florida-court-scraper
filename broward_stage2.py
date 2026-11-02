@@ -18,7 +18,7 @@ DEBUG_DIR = os.getenv("DEBUG_DIR_BROWARD", os.path.join(BASE_DIR, "debug_screens
 os.makedirs(DOCKET_DIR, exist_ok=True)
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
-BROWARD_COURT_URL = "https://www.browardclerk.org/Web2/CaseSearch/"
+BROWARD_COURT_URL = "https://www.browardclerk.org/Web2/CaseSearchECA/Index/?AccessLevel=ANONYMOUS#caseNumberSearch"
 BROWARD_BASE_URL = "https://www.browardclerk.org"
 
 
@@ -66,13 +66,13 @@ async def process_broward_case(page, context, case_record: Dict[str, Any]):
             await page.wait_for_timeout(2000)
 
         # 2. Case search tab
-        case_tab = page.locator("a:has-text('Case Number'), button:has-text('Case Number'), #tabCaseNumber").first
+        case_tab = page.locator("a[href*='caseNumberSearch'], a:has-text('Case Number'), button:has-text('Case Number'), #tabCaseNumber").first
         if await case_tab.is_visible():
             await case_tab.click()
             await page.wait_for_timeout(1000)
 
         # 3. Locate Case Number input
-        case_input = page.locator("input#CaseNumber, input[name*='CaseNumber'], input#txtCaseNumber, input[placeholder*='Case']").first
+        case_input = page.locator("#caseNumberSearch input[type='text'], input#CaseNumber, input[name*='CaseNumber'], input#txtCaseNumber, input[placeholder*='Case']").first
         if not await case_input.is_visible():
             case_input = page.locator("input[type='text']").first
 
@@ -83,16 +83,29 @@ async def process_broward_case(page, context, case_record: Dict[str, Any]):
 
         # Try searching with clean case number
         await case_input.fill(clean_case)
-        search_btn = page.locator("input[type='submit'][value*='Search'], button[type='submit'], button:has-text('Search'), input#btnSearch").first
+
+        # Wait for Turnstile token resolution via Bright Data automated solver
+        print("    ├── Waiting for Turnstile solver...")
+        for _ in range(20):
+            token = await page.evaluate("""() => {
+                const t = document.querySelector('[name=\"cf-turnstile-response\"], [name=\"g-recaptcha-response\"]');
+                return t ? t.value : null;
+            }""")
+            if token and len(token) > 10:
+                print("    ├── Turnstile solved!")
+                break
+            await page.wait_for_timeout(1000)
+
+        search_btn = page.locator("#caseNumberSearch button:visible:has-text('Search'), button:visible:has-text('Search'), input#btnSearch").first
         if await search_btn.is_visible():
             await search_btn.click()
         else:
             await page.keyboard.press("Enter")
 
-        await page.wait_for_timeout(3500)
+        await page.wait_for_timeout(4500)
 
         # If 0 results, retry with dashed case format
-        results_rows = await page.locator("table tbody tr, #results-table tbody tr").all()
+        results_rows = await page.locator("table tbody tr, #results-table tbody tr, #gridCaseNumberSearch tbody tr").all()
         if not results_rows and dashed_case != clean_case:
             print(f"    [~] Retrying with dashed case format: '{dashed_case}'...")
             await case_input.fill(dashed_case)
@@ -100,8 +113,8 @@ async def process_broward_case(page, context, case_record: Dict[str, Any]):
                 await search_btn.click()
             else:
                 await page.keyboard.press("Enter")
-            await page.wait_for_timeout(3500)
-            results_rows = await page.locator("table tbody tr, #results-table tbody tr").all()
+            await page.wait_for_timeout(4500)
+            results_rows = await page.locator("table tbody tr, #results-table tbody tr, #gridCaseNumberSearch tbody tr").all()
 
         if not results_rows:
             print(f"    [-] Case {case_no} not returned by Broward eClerk (may be sealed or pending).")
@@ -110,7 +123,7 @@ async def process_broward_case(page, context, case_record: Dict[str, Any]):
 
         # View case docket details
         first_row = results_rows[0]
-        view_link = first_row.locator("a:has-text('View'), a[href*='Detail'], a[href*='Case'], a").first
+        view_link = first_row.locator("a:has-text('View'), a[href*='Detail'], a[href*='Case'], .btn-case-detail, a").first
         print(f"    ├── Opening Case Docket Details...")
         await view_link.click()
         await page.wait_for_timeout(4000)
@@ -221,17 +234,24 @@ async def run_broward_stage2():
     print(f"[*] Total Pending Cases: {len(pending)}")
     print(f"{'='*60}")
 
+    ws_endpoint = os.getenv("BRIGHT_DATA_WS_ENDPOINT")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-        )
-        context = await browser.new_context(
-            accept_downloads=True,
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 900}
-        )
-        page = await context.new_page()
+        if ws_endpoint and not os.getenv("USE_LOCAL_BROWSER", "").lower() in ("true", "1"):
+            print("[*] Connecting to Bright Data Scraping Browser for Broward Court Search...")
+            browser = await p.chromium.connect_over_cdp(ws_endpoint)
+            context = browser.contexts[0] if browser.contexts else await browser.new_context(accept_downloads=True)
+            page = await context.new_page()
+        else:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+            )
+            context = await browser.new_context(
+                accept_downloads=True,
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                viewport={"width": 1440, "height": 900}
+            )
+            page = await context.new_page()
 
         try:
             for case_rec in pending:

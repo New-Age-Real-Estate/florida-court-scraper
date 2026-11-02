@@ -130,6 +130,12 @@ async def run_hillsborough_flow(target_date: str, skip_hover: bool, county_summa
         print(f"  • Case Numbers Identified:     {summary['cases_identified']}")
         print(f"  • Cases with Debt Extracted:   {summary['cases_with_debt']}")
         print(f"  • Total Extracted Debt Value:  ${summary['total_debt_value']:,.2f}")
+        try:
+            from cloud_factory_intake import admit_county_filings
+            intake_res = admit_county_filings("hillsborough", target_date=target_date)
+            print(f"  • Machine Intake:              Admitted {intake_res.get('admitted', 0)}, Already Enqueued {intake_res.get('already_enqueued', 0)}")
+        except Exception as ie:
+            print(f"[!] Machine intake note for Hillsborough: {ie}")
         print(f"=======================================================\n")
 
         county_summaries["hillsborough"] = {
@@ -173,6 +179,12 @@ async def run_orange_flow(target_date: str, skip_hover: bool, county_summaries: 
         print(f"=======================================================")
         print(f"  • Total Lis Pendens Downloaded: {orange_lps}")
         print(f"  • Orange County Report:        {orange_csv}")
+        try:
+            from cloud_factory_intake import admit_county_filings
+            intake_res = admit_county_filings("orange", target_date=target_date)
+            print(f"  • Machine Intake:              Admitted {intake_res.get('admitted', 0)}, Already Enqueued {intake_res.get('already_enqueued', 0)}")
+        except Exception as ie:
+            print(f"[!] Machine intake note for Orange: {ie}")
         print(f"=======================================================\n")
 
         county_summaries["orange"] = {
@@ -213,6 +225,12 @@ async def run_duval_flow(target_date: str, skip_hover: bool, county_summaries: d
         print(f"=======================================================")
         print(f"  • Total Lis Pendens Downloaded: {duval_lps}")
         print(f"  • Duval County Report:         {duval_csv}")
+        try:
+            from cloud_factory_intake import admit_county_filings
+            intake_res = admit_county_filings("duval", target_date=target_date)
+            print(f"  • Machine Intake:              Admitted {intake_res.get('admitted', 0)}, Already Enqueued {intake_res.get('already_enqueued', 0)}")
+        except Exception as ie:
+            print(f"[!] Machine intake note for Duval: {ie}")
         print(f"=======================================================")
 
         county_summaries["duval"] = {
@@ -253,6 +271,12 @@ async def run_broward_flow(target_date: str, skip_hover: bool, county_summaries:
         print(f"=======================================================")
         print(f"  • Total Lis Pendens Downloaded: {broward_lps}")
         print(f"  • Broward County Report:       {broward_csv}")
+        try:
+            from cloud_factory_intake import admit_county_filings
+            intake_res = admit_county_filings("broward", target_date=target_date)
+            print(f"  • Machine Intake:              Admitted {intake_res.get('admitted', 0)}, Already Enqueued {intake_res.get('already_enqueued', 0)}")
+        except Exception as ie:
+            print(f"[!] Machine intake note for Broward: {ie}")
         print(f"=======================================================")
 
         county_summaries["broward"] = {
@@ -293,6 +317,12 @@ async def run_sarasota_flow(target_date: str, skip_hover: bool, county_summaries
         print(f"=======================================================")
         print(f"  • Total Lis Pendens Downloaded: {sarasota_lps}")
         print(f"  • Sarasota County Report:      {sarasota_csv}")
+        try:
+            from cloud_factory_intake import admit_county_filings
+            intake_res = admit_county_filings("sarasota", target_date=target_date)
+            print(f"  • Machine Intake:              Admitted {intake_res.get('admitted', 0)}, Already Enqueued {intake_res.get('already_enqueued', 0)}")
+        except Exception as ie:
+            print(f"[!] Machine intake note for Sarasota: {ie}")
         print(f"=======================================================")
 
         county_summaries["sarasota"] = {
@@ -333,6 +363,12 @@ async def run_manatee_flow(target_date: str, skip_hover: bool, county_summaries:
         print(f"=======================================================")
         print(f"  • Total Lis Pendens Downloaded: {manatee_lps}")
         print(f"  • Manatee County Report:        {manatee_csv}")
+        try:
+            from cloud_factory_intake import admit_county_filings
+            intake_res = admit_county_filings("manatee", target_date=target_date)
+            print(f"  • Machine Intake:              Admitted {intake_res.get('admitted', 0)}, Already Enqueued {intake_res.get('already_enqueued', 0)}")
+        except Exception as ie:
+            print(f"[!] Machine intake note for Manatee: {ie}")
         print(f"=======================================================\n")
 
         county_summaries["manatee"] = {
