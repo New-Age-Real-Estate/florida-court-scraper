@@ -99,14 +99,22 @@ async def process_manatee_case(page, context, case_record: Dict[str, Any]):
             update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="Case not returned in court search")
             return
 
-        # View case details (first result row View link)
+        # View case details (first result row View button/link)
         first_row = results_rows[0]
-        view_link = first_row.locator("a:has-text('View'), a[href*='Details'], a[href*='Case']").first
-        if not await view_link.is_visible():
-            view_link = first_row.locator("a").first
+        row_text = await first_row.inner_text()
+        if "no matching" in row_text.lower() or "no records" in row_text.lower():
+            print(f"    [-] Case {case_no} not found in Manatee Court Records.")
+            update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="No matching records")
+            return
+
+        view_btn = first_row.locator("button[title*='Open Case'], button.btn, form[action*='Details'] button, a").first
+        if not await view_btn.is_visible():
+            print(f"    [-] Case {case_no} view button not located in results row.")
+            update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="View button not found")
+            return
 
         print(f"    ├── Opening Case Docket View...")
-        await view_link.click()
+        await view_btn.click()
         await page.wait_for_timeout(4000)
 
         page_content = await page.content()

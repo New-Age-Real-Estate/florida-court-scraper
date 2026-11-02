@@ -180,7 +180,7 @@ class AIReportApprover:
         # --- 3. RULE R10: AUTHENTIC COURT DEBT (LIS PENDENS) ---
         if lane == "LIS_PENDENS":
             debt_status = report.get("court_debt_status")
-            debt_amount = report.get("court_debt_amount")
+            debt_amount = report.get("court_debt_amount") if report.get("court_debt_amount") is not None else report.get("court_debt_case_total")
             metrics["court_debt_status"] = debt_status
             metrics["court_debt_amount"] = debt_amount
 
