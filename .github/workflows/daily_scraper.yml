@@ -61,6 +61,14 @@ jobs:
           echo "[+] Running automated cloud intake into NAGE Cockpit..."
           python cloud_factory_intake.py --all-counties || echo "Cloud intake completed with warning."
 
+      - name: Run AI Report Approver & Publication Gate
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "[+] Running AI Approver Agent on staged reports..."
+          python tools/ai_report_approver.py --apply --auto-reject || echo "Approver completed with warning."
+
       - name: Upload Daily Run Artifacts (CSV & DB Backup)
         if: always()
         uses: actions/upload-artifact@v4
