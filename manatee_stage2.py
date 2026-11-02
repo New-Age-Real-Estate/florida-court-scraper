@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -82,44 +83,38 @@ async def process_manatee_case(page, context, case_record: Dict[str, Any]):
 
         await page.wait_for_timeout(3500)
 
-        # If 0 results, retry with dashed case format
-        results_rows = await page.locator("#results-table tbody tr").all()
-        if not results_rows and dashed_case != clean_case:
+        # Locate data rows (skip pagination/header rows)
+        data_rows = await page.locator("#results-table tr.data-row").all()
+        if not data_rows and dashed_case != clean_case:
             print(f"    [~] Retrying search with dashed format: '{dashed_case}'...")
             await case_input.fill(dashed_case)
             if await search_btn.is_visible():
                 await search_btn.click()
             else:
                 await page.keyboard.press("Enter")
-            await page.wait_for_timeout(3500)
-            results_rows = await page.locator("#results-table tbody tr").all()
+            await page.wait_for_timeout(4000)
+            data_rows = await page.locator("#results-table tr.data-row").all()
 
-        if not results_rows:
-            print(f"    [-] Case {case_no} not found in Manatee Court Records (may be sealed or pending clerk entry).")
-            update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="Case not returned in court search")
-            return
-
-        # View case details (first result row View button/link)
-        first_row = results_rows[0]
-        row_text = await first_row.inner_text()
-        if "no matching" in row_text.lower() or "no records" in row_text.lower():
+        if not data_rows:
             print(f"    [-] Case {case_no} not found in Manatee Court Records.")
             update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="No matching records")
             return
 
-        view_btn = first_row.locator("button[title*='Open Case'], button.btn, form[action*='Details'] button, a").first
+        # View case details (click Open Case button in first data row)
+        first_row = data_rows[0]
+        view_btn = first_row.locator("button[title*='Open Case'], button.btn, form[action*='Details'] button").first
         if not await view_btn.is_visible():
-            print(f"    [-] Case {case_no} view button not located in results row.")
-            update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="View button not found")
+            print(f"    [-] Case {case_no} Open Case button not located.")
+            update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="Open Case button not found")
             return
 
         print(f"    ├── Opening Case Docket View...")
         await view_btn.click()
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(4500)
 
         page_content = await page.content()
 
-        # 1. Check for Claim Amount in header
+        # 1. Check for Claim Amount in Case Header
         debt_amount: Optional[float] = None
         header_patterns = [
             r"(?:Amount\s*in\s*Controversy|Claim\s*Amount|Damages\s*Claimed)[:\s]*\$?\s*([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})",
@@ -133,78 +128,95 @@ async def process_manatee_case(page, context, case_record: Dict[str, Any]):
                 print(f"    ├── Claim Amount identified in Case Header: ${debt_amount:,.2f}")
                 break
 
-        # 2. Inspect Court Dockets for Complaint PDF
-        docket_rows = await page.locator("table.dockets tbody tr, table.docket tbody tr, table tbody tr").all()
-        complaint_link = None
+        # 2. Inspect #dockets table for Value Claim Form or Complaint
+        docket_rows = await page.locator("#dockets tr, table.dockets tr, table tbody tr").all()
+        target_docket_btn = None
+        target_doc_title = "VALUE OF REAL PROPERTY OR MORTGAGE FORECLOSURE CLAIM"
 
+        # Pass 1: Look for explicit Value of Real Property / Claim form
         for d_row in docket_rows:
-            txt = (await d_row.inner_text()).lower()
-            if "complaint" in txt or "foreclosure" in txt or "mortgage" in txt:
-                link = d_row.locator("a[href*='.pdf'], a[href*='Document'], a:has-text('View'), a").first
-                if await link.is_visible():
-                    complaint_link = link
-                    print(f"    ├── Identified Foreclosure Complaint Docket entry.")
+            txt = (await d_row.inner_text()).upper()
+            if "VALUE OF REAL PROPERTY" in txt or "MORTGAGE FORECLOSURE CLAIM" in txt or "VALUE CLAIM" in txt:
+                btn = d_row.locator("button[title*='View Image'], button.btn, button[type='submit']").first
+                if await btn.is_visible():
+                    target_docket_btn = btn
+                    target_doc_title = "VALUE OF REAL PROPERTY OR MORTGAGE FORECLOSURE CLAIM"
+                    print(f"    ├── Identified Value Claim Form on docket.")
                     break
 
-        docket_pdf_s3_url = ""
-        if complaint_link:
-            docket_filename = f"Manatee_Docket_{clean_case}_Complaint.pdf"
+        # Pass 2: Fall back to Foreclosure Complaint if Value form not separate
+        if not target_docket_btn:
+            for d_row in docket_rows:
+                txt = (await d_row.inner_text()).upper()
+                if "COMPLAINT" in txt and ("FORECLOSURE" in txt or "MORTGAGE" in txt):
+                    btn = d_row.locator("button[title*='View Image'], button.btn, button[type='submit']").first
+                    if await btn.is_visible():
+                        target_docket_btn = btn
+                        target_doc_title = "VERIFIED COMPLAINT FOR FORECLOSURE OF MORTGAGE"
+                        print(f"    ├── Identified Foreclosure Complaint on docket.")
+                        break
+
+        local_docket_path: Optional[str] = None
+        if target_docket_btn:
+            docket_filename = f"Manatee_Docket_{clean_case}_Value_Claim_Form.pdf"
             local_docket_path = os.path.join(DOCKET_DIR, docket_filename)
-            view_href = await complaint_link.get_attribute("href") or ""
 
-            if view_href:
-                full_view = view_href if view_href.startswith("http") else f"{MANATEE_BASE_URL}{view_href}"
-                doc_page = await context.new_page()
-                try:
-                    async with doc_page.expect_download(timeout=8000) as dl_info:
-                        await doc_page.goto(full_view, wait_until="domcontentloaded", timeout=25000)
-                    dl = await dl_info.value
-                    await dl.save_as(local_docket_path)
-                except Exception:
-                    # Check if iframe embeds PDF or direct stream
-                    await doc_page.wait_for_timeout(2000)
-                    embed_src = await doc_page.evaluate("""() => {
-                        const f = document.querySelector('iframe[src*=\"pdf\"], embed[src*=\"pdf\"], object[data*=\"pdf\"]');
-                        return f ? (f.src || f.data) : null;
-                    }""")
-                    if embed_src:
-                        full_embed = embed_src if embed_src.startswith("http") else f"{MANATEE_BASE_URL}{embed_src}"
-                        pdf_data = await doc_page.evaluate("""async (url) => {
-                            const resp = await fetch(url);
-                            const buf = await resp.arrayBuffer();
-                            return Array.from(new Uint8Array(buf));
-                        }""", full_embed)
-                        with open(local_docket_path, "wb") as f:
-                            f.write(bytes(pdf_data))
-                finally:
-                    await doc_page.close()
+            try:
+                # Click View Image button to load StandardsImageViewer
+                await target_docket_btn.click()
+                await page.wait_for_timeout(4500)
 
-                if os.path.exists(local_docket_path) and os.path.getsize(local_docket_path) > 1000:
-                    if not debt_amount:
-                        debt_amount = extract_debt_from_complaint_pdf(local_docket_path)
-                        if debt_amount:
-                            print(f"    ├── Extracted Debt Amount from Complaint text: ${debt_amount:,.2f}")
+                img_locator = page.locator("img[src*='InstrumentResultJpg']").first
+                if await img_locator.is_visible():
+                    src = await img_locator.get_attribute("src") or ""
+                    full_img_url = f"{MANATEE_BASE_URL}{src}" if src.startswith("/") else src
+                    print(f"    ├── Downloading claim form image from {full_img_url[:65]}...")
+                    resp = await page.request.get(full_img_url)
+                    img_bytes = await resp.body()
 
-                    # Upload Complaint Docket vector PDF to S3
-                    s3_docket_key = f"manatee/dockets/{docket_filename}"
-                    docket_pdf_s3_url = upload_file_to_cloud(local_docket_path, s3_docket_key) or ""
-                    print(f"    └── Complaint Docket Vector PDF uploaded to S3: {docket_pdf_s3_url}")
+                    from PIL import Image
+                    import io
+                    im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                    im.save(local_docket_path)
+                    print(f"    ├── Saved converted Claim PDF: {local_docket_path} ({os.path.getsize(local_docket_path)} bytes)")
+            except Exception as dl_err:
+                print(f"    [!] Error acquiring claim form image: {dl_err}")
 
-        if debt_amount:
-            print(f"[+] SUCCESS: Debt Amount for Case {case_no}: ${debt_amount:,.2f}")
-            update_hover_results(
-                instrument_number=inst_num,
-                hover_status="SUCCESS",
-                debt_amount=debt_amount,
-                docket_pdf_path=docket_pdf_s3_url
-            )
-        else:
-            print(f"[~] Case {case_no} reviewed; no debt figure extracted.")
-            update_hover_results(
-                instrument_number=inst_num,
-                hover_status="NO_DEBT_FOUND",
-                docket_pdf_path=docket_pdf_s3_url
-            )
+        # Drop court debt record if PDF acquired
+        if local_docket_path and os.path.exists(local_docket_path) and os.path.getsize(local_docket_path) > 1000:
+            try:
+                from cloud_factory_intake import VerifiedCloudIntake
+                c_intake = VerifiedCloudIntake()
+                rec = c_intake.drop_court_debt_record(
+                    county_slug="manatee",
+                    raw_case_number=clean_case,
+                    court_claim_pdf=Path(local_docket_path),
+                    source_url=f"{MANATEE_BASE_URL}/CourtRecords/Case/Details",
+                    document_title=target_doc_title,
+                    instrument_number=inst_num,
+                    status="HELD",
+                )
+                print(f"    ├── Dropped court debt record: {rec.get('id')} status={rec.get('body', {}).get('status')}")
+            except Exception as drop_err:
+                print(f"    [!] Error dropping court debt record: {drop_err}")
+
+            if not debt_amount:
+                debt_amount = extract_debt_from_complaint_pdf(local_docket_path)
+                if debt_amount:
+                    print(f"    ├── Extracted Debt Amount from text: ${debt_amount:,.2f}")
+
+        # Upload Complaint Docket vector PDF to S3/Storage
+        docket_pdf_s3_url = ""
+        if local_docket_path and os.path.exists(local_docket_path):
+            s3_docket_key = f"manatee/dockets/Manatee_Docket_{clean_case}_Value_Claim_Form.pdf"
+            docket_pdf_s3_url = upload_file_to_cloud(local_docket_path, s3_docket_key) or local_docket_path
+
+        update_hover_results(
+            instrument_number=inst_num,
+            hover_status="SUCCESS" if local_docket_path else "NO_FORM",
+            debt_amount=debt_amount,
+            docket_pdf_path=local_docket_path or docket_pdf_s3_url
+        )
 
     except Exception as e:
         print(f"[-] Error processing Manatee case {case_no}: {e}")
