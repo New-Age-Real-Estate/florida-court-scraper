@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -181,6 +182,23 @@ async def process_sarasota_case(page, context, case_record: Dict[str, Any]):
                     await doc_page.close()
 
                 if os.path.exists(local_docket_path) and os.path.getsize(local_docket_path) > 1000:
+                    try:
+                        from cloud_factory_intake import VerifiedCloudIntake
+                        c_intake = VerifiedCloudIntake()
+                        rec = c_intake.drop_court_debt_record(
+                            county_slug="sarasota",
+                            raw_case_number=clean_case,
+                            court_claim_pdf=Path(local_docket_path),
+                            source_url=SARASOTA_PORTAL_URL,
+                            document_title="VALUE OF REAL PROPERTY OR MORTGAGE FORECLOSURE CLAIM",
+                            filed_date=case_record.get("filing_date") or case_record.get("recorded_date"),
+                            instrument_number=inst_num,
+                            status="HELD",
+                        )
+                        print(f"    ├── Dropped court debt record: {rec.get('id')} status={rec.get('body', {}).get('status')}")
+                    except Exception as drop_err:
+                        print(f"    [!] Error dropping court debt record: {drop_err}")
+
                     if not debt_amount:
                         debt_amount = extract_debt_from_complaint_pdf(local_docket_path)
                         if debt_amount:
@@ -188,8 +206,7 @@ async def process_sarasota_case(page, context, case_record: Dict[str, Any]):
 
                     # Upload Complaint Docket vector PDF to S3
                     s3_docket_key = f"sarasota/dockets/{docket_filename}"
-                    docket_pdf_s3_url = upload_file_to_cloud(local_docket_path, s3_docket_key) or ""
-                    print(f"    └── Complaint Docket Vector PDF uploaded to S3: {docket_pdf_s3_url}")
+                    upload_file_to_cloud(local_docket_path, s3_docket_key)
 
         if debt_amount:
             print(f"[+] SUCCESS: Debt Amount for Sarasota Case {case_no}: ${debt_amount:,.2f}")
@@ -197,14 +214,14 @@ async def process_sarasota_case(page, context, case_record: Dict[str, Any]):
                 instrument_number=inst_num,
                 hover_status="SUCCESS",
                 debt_amount=debt_amount,
-                docket_pdf_path=docket_pdf_s3_url
+                docket_pdf_path=local_docket_path
             )
         else:
             print(f"[~] Case {case_no} processed; no debt figure extracted.")
             update_hover_results(
                 instrument_number=inst_num,
                 hover_status="NO_DEBT_FOUND",
-                docket_pdf_path=docket_pdf_s3_url
+                docket_pdf_path=local_docket_path
             )
 
     except Exception as e:

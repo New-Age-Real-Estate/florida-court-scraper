@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -99,15 +100,15 @@ async def process_single_case(page, case_record: dict):
                 except ValueError:
                     pass
 
-        # 4. Locate and download the initial Complaint or Lis Pendens court filing
+        # 4. Locate and download Value of Real Property Claim form or initial Complaint
         docket_download_path = None
         complaint_link = page.locator(
-            "tr:has-text('COMPLAINT') a[title*='View'], tr:has-text('COMPLAINT') a:has-text('View'), tr:has-text('LIS PENDENS') a"
+            "tr:has-text('VALUE') a[title*='View'], tr:has-text('VALUE') a:has-text('View'), tr:has-text('1.996') a, tr:has-text('CLAIM') a, tr:has-text('COMPLAINT') a[title*='View'], tr:has-text('COMPLAINT') a:has-text('View'), tr:has-text('LIS PENDENS') a"
         ).first
 
         if await complaint_link.is_visible():
             clean_case = case_no.replace("/", "-").replace(" ", "_")
-            target_filename = f"HOVER_Docket_{clean_case}_Complaint.pdf"
+            target_filename = f"HOVER_Docket_{clean_case}_Value_Claim_Form.pdf"
             docket_download_path = os.path.join(DOCKET_DIR, target_filename)
 
             try:
@@ -115,14 +116,32 @@ async def process_single_case(page, case_record: dict):
                     await complaint_link.click()
                 dl = await dl_info.value
                 await dl.save_as(docket_download_path)
-                print(f"    ├── Downloaded Complaint Docket: {target_filename}")
-                cloud_docket_url = upload_file_to_cloud(docket_download_path, f"hillsborough/dockets/{target_filename}")
-                if cloud_docket_url:
-                    docket_download_path = cloud_docket_url
+                print(f"    ├── Downloaded Docket PDF: {target_filename}")
+
+                if os.path.exists(docket_download_path) and os.path.getsize(docket_download_path) > 1000:
+                    try:
+                        from cloud_factory_intake import VerifiedCloudIntake
+                        c_intake = VerifiedCloudIntake()
+                        rec = c_intake.drop_court_debt_record(
+                            county_slug="hillsborough",
+                            raw_case_number=case_no,
+                            court_claim_pdf=Path(docket_download_path),
+                            source_url=HOVER_SEARCH_URL,
+                            document_title="VALUE OF REAL PROPERTY OR MORTGAGE FORECLOSURE CLAIM",
+                            filed_date=case_record.get("filing_date") or case_record.get("recording_date"),
+                            instrument_number=inst_num,
+                            status="HELD",
+                        )
+                        print(f"    ├── Dropped court debt record: {rec.get('id')} status={rec.get('body', {}).get('status')}")
+                    except Exception as drop_err:
+                        print(f"    [!] Error dropping court debt record: {drop_err}")
+
+                    s3_key = f"hillsborough/dockets/{target_filename}"
+                    upload_file_to_cloud(docket_download_path, s3_key)
             except Exception as dl_err:
                 print(f"    [!] Could not auto-download docket PDF: {dl_err}")
 
-        # 5. Save results to database
+        # 5. Save results to database (retain local docket_download_path for downstream admission)
         update_hover_results(
             instrument_number=inst_num,
             hover_status="COMPLETED",
