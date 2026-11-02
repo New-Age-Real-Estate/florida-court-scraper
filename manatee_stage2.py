@@ -193,6 +193,7 @@ async def process_manatee_case(page, context, case_record: Dict[str, Any]):
                     court_claim_pdf=Path(local_docket_path),
                     source_url=f"{MANATEE_BASE_URL}/CourtRecords/Case/Details",
                     document_title=target_doc_title,
+                    filed_date=case_record.get("filing_date") or case_record.get("recorded_date"),
                     instrument_number=inst_num,
                     status="HELD",
                 )
