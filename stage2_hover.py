@@ -32,25 +32,46 @@ async def process_single_case(page, case_record: dict):
         await page.goto(HOVER_SEARCH_URL, wait_until="domcontentloaded", timeout=45000)
         await page.wait_for_timeout(2000)
 
-        # 1. Enter Case Number
-        case_input = page.locator("input#caseNumber, input[name='caseNumber'], input[placeholder*='Case Number']").first
-        await case_input.wait_for(state="visible", timeout=15000)
-        await case_input.fill(case_no)
+        # 1. Parse Case Number into Year, Type, and Sequence
+        # Example formats: '26-CA-010772' -> Year: '26', Type: 'CA', Seq: '010772'
+        m = re.search(r"(\d{2,4})-?([A-Z]{2})-?(\d+)", case_no)
+        if m:
+            yr = m.group(1)[-2:]
+            court_type = m.group(2).upper()
+            seq = m.group(3).zfill(6)
+        else:
+            yr = "26"
+            court_type = "CA"
+            seq = case_no
 
-        search_btn = page.locator("button#searchBtn, button[type='submit']:has-text('Search'), input[value='Search']").first
+        # Fill segmented inputs on HOVER
+        year_input = page.locator("#txtYear")
+        if await year_input.is_visible():
+            await year_input.fill(yr)
+            await page.select_option("#ddlCourtType", court_type)
+            await page.fill("#txtNumber", seq)
+        else:
+            case_input = page.locator("input#caseNumber:not([hidden]), input[name='caseNumber']:not([hidden])").first
+            await case_input.fill(case_no)
+
+        search_btn = page.locator("button[aria-label='Search'], button#searchBtn, button[type='submit']:has-text('Search')").first
         await search_btn.click()
         await page.wait_for_timeout(3000)
 
-        # 2. Check for results
+        # 2. Check for results & Open case summary
+        details_btn = page.locator("button[aria-label='Displays detailed Case Information Page and Images, as available']").first
         case_row = page.locator(f"a:has-text('{case_no}'), tr:has-text('{case_no}') a").first
-        if not await case_row.is_visible():
+
+        if await details_btn.is_visible():
+            await details_btn.click()
+            await page.wait_for_timeout(3000)
+        elif await case_row.is_visible():
+            await case_row.click()
+            await page.wait_for_timeout(3000)
+        else:
             print(f"[-] Case {case_no} not found or may be sealed/pending indexing.")
             update_hover_results(inst_num, hover_status="NOT_FOUND", error_log="Case not found in HOVER search results")
             return
-
-        # Open case summary
-        await case_row.click()
-        await page.wait_for_timeout(3000)
 
         # 3. Extract Debt / Claim Amount
         # Florida civil mortgage foreclosures and collections cases display claim amount in:
